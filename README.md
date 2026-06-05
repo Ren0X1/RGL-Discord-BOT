@@ -6,7 +6,11 @@ Bot en Python (discord.py 2.x) con cuatro módulos:
 2. **Voz temporal** — al entrar a un canal "lobby" se crea un canal propio (límite 10) y se borra solo cuando queda vacío.
 3. **Recordatorios** — `/recordatorio` te escribe por privado en la fecha que indiques.
 4. **Avisos de directo** — cuando alguien con cierto rol empieza a transmitir, avisa con `@everyone` y el enlace.
-5. **Eventos** — `/evento` crea un evento del servidor con rango de fechas e imagen de portada.
+5. **Eventos** — `/evento` crea un evento del servidor con rango de fechas e imagen de portada, y avisa con `@everyone` antes de empezar y de acabar.
+6. **Moderación** — `/clear` borra mensajes recientes.
+7. **Stats** — `/stats` muestra el estado del bot y de la máquina (CPU/RAM/temperatura/uptime).
+8. **Bienvenida/despedida + autorol** — mensaje al entrar/salir un miembro y asignación de un rol automático.
+9. **Scrim** — `/scrim` reparte al azar a los de un canal de voz en dos equipos.
 
 El bot, además, se muestra siempre en estado **ausente** (bola amarilla) con una actividad de "Transmitiendo" que apunta a tu enlace (configurable con `STATUS_TEXT` y `STATUS_URL`).
 
@@ -59,6 +63,8 @@ Si todo va bien verás en consola `Conectado como ...`.
 - `/cancelar_recordatorio id:<número>`
 - `/evento nombre:<texto> inicio:<25/12/2026 18:00> fin:<25/12/2026 21:00> imagen:<url> [channel_id] [descripcion]` — evento con ubicación; las horas se redondean al cuarto de hora siguiente
 - `/clear cantidad:<1-1000>` — borra los últimos N mensajes del canal (requiere permiso Gestionar mensajes)
+- `/stats` — estado del bot y de la máquina (latencia, uptime, CPU, RAM, temperatura, disco)
+- `/scrim canal_id:<id voz>` — reparte al azar a los del canal de voz en dos equipos (requiere permiso Mover miembros)
 
 ---
 

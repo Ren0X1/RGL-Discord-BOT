@@ -64,11 +64,14 @@ class Streams(commands.Cog):
         if channel is None:
             return
         titulo = act.name or "directo"
+        juego = getattr(act, "game", None) or getattr(act, "details", None)
         e = discord.Embed(
             title=f"🔴 {member.display_name} está en directo",
             description=f"**{titulo}**\n{act.url}",
             color=0x9146FF,
         )
+        if juego:
+            e.add_field(name="🎮 Jugando a", value=juego, inline=False)
         e.set_thumbnail(url=member.display_avatar.url)
         e.add_field(name="Ver ahora", value=f"[Abrir directo]({act.url})", inline=False)
         try:

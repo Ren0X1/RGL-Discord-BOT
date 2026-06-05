@@ -28,7 +28,17 @@ intents.message_content = True  # leer contenido para los logs
 intents.voice_states = True     # canales de voz temporales
 intents.guilds = True
 
-COGS = ("cogs.logs", "cogs.tempvoice", "cogs.reminders", "cogs.streams", "cogs.events", "cogs.moderation")
+COGS = (
+    "cogs.logs",
+    "cogs.tempvoice",
+    "cogs.reminders",
+    "cogs.streams",
+    "cogs.events",
+    "cogs.moderation",
+    "cogs.stats",
+    "cogs.welcome",
+    "cogs.scrim",
+)
 
 
 class MiBot(commands.Bot):

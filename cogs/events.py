@@ -21,7 +21,7 @@ import logging
 import aiohttp
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 
 import config
 from cogs.reminders import parse_when, now_utc
@@ -63,6 +63,11 @@ async def descargar_imagen(url: str):
 class Events(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.avisados = set()  # (event_id, "inicio"/"fin") ya anunciados
+        self.revisar_eventos.start()
+
+    def cog_unload(self):
+        self.revisar_eventos.cancel()
 
     @app_commands.command(name="evento", description="Crea un evento del servidor con rango de fechas e imagen")
     @app_commands.describe(
@@ -161,6 +166,46 @@ class Events(commands.Cog):
             ephemeral=True,
         )
         log.info("Evento creado: %s por %s (ubicación: %s)", evento.name, interaction.user, ubicacion)
+
+    # ---------- aviso antes de empezar / acabar ----------
+    @tasks.loop(seconds=60)
+    async def revisar_eventos(self):
+        canal = self.bot.get_channel(config.EVENT_ANNOUNCE_CHANNEL_ID)
+        if canal is None:
+            return
+        ahora = now_utc()
+        margen = datetime.timedelta(minutes=config.EVENT_LEAD_MINUTES)
+
+        for guild in self.bot.guilds:
+            for ev in guild.scheduled_events:
+                # Aviso de "está a punto de empezar"
+                if ev.status in (discord.EventStatus.scheduled,) and ev.start_time:
+                    if ahora >= ev.start_time - margen and ahora < ev.start_time:
+                        await self._avisar(canal, ev, "inicio")
+                # Aviso de "está a punto de acabar"
+                if ev.end_time and ev.status in (discord.EventStatus.scheduled, discord.EventStatus.active):
+                    if ahora >= ev.end_time - margen and ahora < ev.end_time:
+                        await self._avisar(canal, ev, "fin")
+
+    async def _avisar(self, canal, ev, fase):
+        clave = (ev.id, fase)
+        if clave in self.avisados:
+            return
+        self.avisados.add(clave)
+        if fase == "inicio":
+            momento = int(ev.start_time.timestamp())
+            texto = f"@everyone ⏰ El evento **{ev.name}** empieza <t:{momento}:R> — {ev.url}"
+        else:
+            momento = int(ev.end_time.timestamp())
+            texto = f"@everyone 🏁 El evento **{ev.name}** termina <t:{momento}:R> — {ev.url}"
+        try:
+            await canal.send(texto, allowed_mentions=discord.AllowedMentions(everyone=True))
+        except discord.HTTPException as exc:
+            log.warning("No pude avisar del evento: %s", exc)
+
+    @revisar_eventos.before_loop
+    async def _antes(self):
+        await self.bot.wait_until_ready()
 
 
 async def setup(bot):

@@ -45,6 +45,20 @@ STREAM_ANNOUNCE_CHANNEL_ID = _int("STREAM_ANNOUNCE_CHANNEL_ID")
 STREAM_ROLE_IDS = _ids("STREAM_ROLE_IDS")   # solo avisa si el usuario tiene alguno de estos roles
 STREAM_MENTION = os.getenv("STREAM_MENTION", "@everyone")
 
+# --- 5) Eventos: aviso @everyone antes de empezar/acabar ---
+EVENT_ANNOUNCE_CHANNEL_ID = _int("EVENT_ANNOUNCE_CHANNEL_ID")
+EVENT_LEAD_MINUTES = _int("EVENT_LEAD_MINUTES", 10)   # minutos de antelación del aviso
+
+# --- 6) Bienvenida / despedida + autorol ---
+WELCOME_CHANNEL_ID = _int("WELCOME_CHANNEL_ID")
+WELCOME_MESSAGE = os.getenv("WELCOME_MESSAGE", "¡Bienvenido/a {user} a {server}! 🎉")
+GOODBYE_MESSAGE = os.getenv("GOODBYE_MESSAGE", "{user} ha salido del servidor. 👋")
+AUTOROLE_ID = _int("AUTOROLE_ID")   # rol que se asigna a cada nuevo miembro
+
+# --- 7) Scrim (repartir equipos de voz) ---
+SCRIM_TEAM1_CHANNEL_ID = _int("SCRIM_TEAM1_CHANNEL_ID")
+SCRIM_TEAM2_CHANNEL_ID = _int("SCRIM_TEAM2_CHANNEL_ID")
+
 # --- General ---
 TIMEZONE = os.getenv("TIMEZONE", "Europe/Madrid")
 
