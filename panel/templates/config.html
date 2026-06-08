@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>root@RnxZeroPI — config</title>
+  <style>
+    :root { color-scheme:dark; --grn:#00ff66; --grn-dim:#0a9; --amber:#ffb000; --red:#ff4d4d; --bg:#000600; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--grn); padding:22px;
+      font-family: ui-monospace,'JetBrains Mono','Cascadia Code','Fira Code',Consolas,'Courier New',monospace;
+      text-shadow:0 0 5px rgba(0,255,102,.4); }
+    .wrap { max-width:760px; margin:0 auto; }
+    header { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;
+      border-bottom:1px dashed rgba(0,255,102,.3); padding-bottom:10px; }
+    header h1 { font-size:15px; margin:0; }
+    header h1::before { content:"// "; color:var(--grn-dim); }
+    a { color:var(--grn-dim); text-decoration:none; font-size:12px; }
+    a:hover { color:var(--grn); }
+    .sec { color:var(--amber); font-size:12px; letter-spacing:1px; margin:18px 0 8px; }
+    .sec::before { content:":: "; }
+    .field { margin-bottom:10px; }
+    label { display:block; font-size:12px; color:var(--grn-dim); margin-bottom:4px; }
+    input { width:100%; background:#001400; border:1px solid rgba(0,255,102,.3); border-radius:3px;
+      color:var(--grn); font:inherit; font-size:13px; padding:8px 10px; }
+    input:focus { outline:none; border-color:var(--grn); }
+    input.secret { border-color:rgba(255,176,0,.4); }
+    .save { position:sticky; bottom:0; padding:14px 0; background:linear-gradient(transparent,var(--bg) 40%); }
+    button { font:inherit; font-weight:700; cursor:pointer; padding:11px 18px; border-radius:3px;
+      background:transparent; border:1px solid var(--grn); color:var(--grn); text-shadow:0 0 5px rgba(0,255,102,.5); }
+    button:hover { background:var(--grn); color:#000; text-shadow:none; box-shadow:0 0 14px rgba(0,255,102,.5); }
+    .flash { padding:9px 12px; font-size:12px; margin-bottom:14px; border:1px solid; }
+    .flash.ok { color:var(--grn); border-color:var(--grn); }
+    .flash.error { color:var(--red); border-color:var(--red); }
+    .muted { color:var(--grn-dim); font-size:11px; margin:0 0 14px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>config :: .env</h1>
+      <a href="{{ url_for('dashboard') }}">[ &larr; volver ]</a>
+    </header>
+    {% with msgs = get_flashed_messages(with_categories=true) %}
+      {% for cat, msg in msgs %}<div class="flash {{ cat }}">{{ '>' if cat=='ok' else '!' }} {{ msg }}</div>{% endfor %}
+    {% endwith %}
+    <p class="muted">// los secretos (token, contraseñas) no se muestran. Déjalos vacíos para no cambiarlos. Tras guardar, reinicia el bot.</p>
+    <form method="post" action="{{ url_for('config_editor') }}">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      {% for c in campos %}
+        {% if c.section %}<div class="sec">{{ c.section }}</div>{% endif %}
+        <div class="field">
+          <label>{{ c.key }}</label>
+          {% if c.secret %}
+            <input class="secret" type="password" name="{{ c.key }}" placeholder="(dejar vacío = sin cambios)" autocomplete="off">
+          {% else %}
+            <input type="text" name="{{ c.key }}" value="{{ c.value }}">
+          {% endif %}
+        </div>
+      {% endfor %}
+      <div class="save"><button type="submit">[ GUARDAR ]</button></div>
+    </form>
+  </div>
+</body>
+</html>

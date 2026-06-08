@@ -38,6 +38,8 @@ COGS = (
     "cogs.stats",
     "cogs.welcome",
     "cogs.scrim",
+    "cogs.autoreact",
+    "cogs.owner_notify",
 )
 
 

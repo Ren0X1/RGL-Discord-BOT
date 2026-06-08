@@ -59,6 +59,31 @@ AUTOROLE_ID = _int("AUTOROLE_ID")   # rol que se asigna a cada nuevo miembro
 SCRIM_TEAM1_CHANNEL_ID = _int("SCRIM_TEAM1_CHANNEL_ID")
 SCRIM_TEAM2_CHANNEL_ID = _int("SCRIM_TEAM2_CHANNEL_ID")
 
+# --- 8) Auto-reacción: reacciona a los mensajes de quien tenga este rol ---
+REACT_ROLE_ID = _int("REACT_ROLE_ID")
+
+_FACES_POR_DEFECTO = (
+    "😀 😃 😄 😁 😆 😅 😂 🤣 🥲 😊 😇 🙂 🙃 😉 😌 😍 🥰 😘 😗 😙 😚 😋 😛 😝 😜 "
+    "🤪 🤨 🧐 🤓 😎 🥸 🤩 🥳 😏 😒 😞 😔 😟 😕 🙁 😣 😖 😫 😩 🥺 😢 😭 😤 😠 😡 "
+    "🤬 🤯 😳 🥵 🥶 😱 😨 😰 😥 😓 🤗 🤔 🤭 🤫 🤥 😶 😐 😑 😬 🙄 😯 😦 😧 😮 😲 "
+    "🥱 😴 🤤 😪 😵 🤐 🥴 🤢 🤮 🤧 😷 🤒 🤕 🤑 🤠 😈 👿 💀 💩 🤡 👹 👺 👻 👽 🤖"
+).split()
+
+
+def _emojis(name, default):
+    raw = os.getenv(name, "")
+    if not raw.strip():
+        return default
+    partes = [p for p in raw.replace(",", " ").split() if p]
+    return partes or default
+
+
+REACT_EMOJIS = _emojis("REACT_EMOJIS", _FACES_POR_DEFECTO)
+REACT_USE_SERVER_EMOJIS = _bool("REACT_USE_SERVER_EMOJIS", True)
+
+# --- 9) Aviso al owner cuando el bot arranca ---
+OWNER_USER_ID = _int("OWNER_USER_ID")
+
 # --- General ---
 TIMEZONE = os.getenv("TIMEZONE", "Europe/Madrid")
 

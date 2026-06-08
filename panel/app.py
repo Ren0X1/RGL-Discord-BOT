@@ -19,6 +19,8 @@ import secrets
 import hmac
 import functools
 import subprocess
+import threading
+import collections
 
 from flask import (
     Flask, request, session, redirect, url_for, render_template, flash, jsonify, Response
@@ -28,7 +30,11 @@ from waitress import serve
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 BOT_DIR = os.path.dirname(BASE_DIR)            # /home/renox/discord-bot
-load_dotenv(os.path.join(BOT_DIR, ".env"))
+ENV_PATH = os.path.join(BOT_DIR, ".env")
+load_dotenv(ENV_PATH)
+
+# Claves que NO se muestran en el editor (se enmascaran)
+SECRETOS = {"DISCORD_TOKEN", "PANEL_PASSWORD", "PANEL_SECRET_KEY"}
 
 PANEL_PASSWORD = os.getenv("PANEL_PASSWORD", "")
 PANEL_PORT = int(os.getenv("PANEL_PORT", "8080"))
@@ -139,7 +145,63 @@ def stats():
     return d
 
 
-# ---------- rutas ----------
+# ---------- histórico para las gráficas ----------
+HIST = collections.deque(maxlen=180)  # ~30 min a 1 muestra/10s
+
+
+def _sampler():
+    while True:
+        try:
+            s = stats()
+            ram_pct = None
+            if s.get("ram_used") and s.get("ram_total"):
+                ram_pct = round(s["ram_used"] / s["ram_total"] * 100)
+            HIST.append({"t": int(time.time()), "cpu": s.get("cpu"), "ram": ram_pct, "temp": s.get("temp")})
+        except Exception:
+            pass
+        time.sleep(10)
+
+
+threading.Thread(target=_sampler, daemon=True).start()
+
+
+# ---------- editor del .env ----------
+def leer_env():
+    """Devuelve la lista de líneas del .env (para reconstruirlo conservando
+    comentarios) y un dict {clave: valor}."""
+    lineas, valores = [], {}
+    try:
+        with open(ENV_PATH, encoding="utf-8") as f:
+            for linea in f:
+                lineas.append(linea.rstrip("\n"))
+                s = linea.strip()
+                if s and not s.startswith("#") and "=" in s:
+                    k, _, v = s.partition("=")
+                    valores[k.strip()] = v
+    except FileNotFoundError:
+        pass
+    return lineas, valores
+
+
+def escribir_env(form):
+    """Reescribe el .env aplicando los valores del formulario, conservando
+    comentarios y orden. Para secretos, vacío = sin cambios."""
+    lineas, _ = leer_env()
+    nuevas = []
+    for linea in lineas:
+        s = linea.strip()
+        if s and not s.startswith("#") and "=" in s:
+            k = s.partition("=")[0].strip()
+            if k in form:
+                nuevo = form.get(k, "")
+                if k in SECRETOS and nuevo == "":
+                    nuevas.append(linea)  # sin cambios
+                else:
+                    nuevas.append(f"{k}={nuevo}")
+                continue
+        nuevas.append(linea)
+    with open(ENV_PATH, "w", encoding="utf-8") as f:
+        f.write("\n".join(nuevas) + "\n")
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
@@ -169,6 +231,55 @@ def api_status():
     data = stats()
     data["bot"] = bot_status()
     return jsonify(data)
+
+
+@app.route("/api/history")
+@login_required
+def api_history():
+    data = list(HIST)
+    return jsonify({
+        "t": [d["t"] for d in data],
+        "cpu": [d["cpu"] for d in data],
+        "ram": [d["ram"] for d in data],
+        "temp": [d["temp"] for d in data],
+    })
+
+
+@app.route("/config", methods=["GET", "POST"])
+@login_required
+def config_editor():
+    if request.method == "POST":
+        if request.form.get("csrf") != session.get("csrf"):
+            flash("Token de seguridad inválido. Recarga la página.", "error")
+            return redirect(url_for("config_editor"))
+        try:
+            escribir_env(request.form)
+            flash("Configuración guardada. Reinicia el bot para aplicar los cambios.", "ok")
+        except Exception as e:
+            flash(f"Error guardando: {e}", "error")
+        return redirect(url_for("config_editor"))
+
+    lineas, valores = leer_env()
+    # Construir la estructura para la plantilla: secciones por comentario
+    campos = []
+    seccion = None
+    for linea in lineas:
+        s = linea.strip()
+        if s.startswith("#"):
+            txt = s.lstrip("# ").strip()
+            if txt:
+                seccion = txt
+        elif s and "=" in s:
+            k = s.partition("=")[0].strip()
+            v = valores.get(k, "")
+            campos.append({
+                "key": k,
+                "value": "" if k in SECRETOS else v,
+                "secret": k in SECRETOS,
+                "section": seccion,
+            })
+            seccion = None
+    return render_template("config.html", campos=campos)
 
 
 @app.route("/action/<name>", methods=["POST"])
