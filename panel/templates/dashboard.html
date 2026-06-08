@@ -3,142 +3,157 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Panel del bot</title>
+  <title>root@RnxZeroPI — panel</title>
   <style>
-    :root { color-scheme: dark; }
-    * { box-sizing: border-box; }
+    :root { color-scheme:dark; --grn:#00ff66; --grn-dim:#0a9; --amber:#ffb000; --red:#ff4d4d; --bg:#000600; }
+    * { box-sizing:border-box; }
     body {
-      margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-      background: #0f1115; color: #e6e8eb; padding: 24px;
+      margin:0; background:var(--bg); color:var(--grn); padding:22px;
+      font-family: ui-monospace,'JetBrains Mono','Cascadia Code','Fira Code',Consolas,'Courier New',monospace;
+      text-shadow:0 0 5px rgba(0,255,102,.45);
     }
-    .wrap { max-width: 880px; margin: 0 auto; }
-    header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 22px; }
-    header h1 { font-size: 20px; margin: 0; }
-    a.logout { color: #8b929e; font-size: 13px; text-decoration: none; }
-    a.logout:hover { color: #e6e8eb; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 20px; }
-    .stat { background: #181b21; border: 1px solid #262a31; border-radius: 12px; padding: 14px 16px; }
-    .stat .label { font-size: 12px; color: #8b929e; margin-bottom: 6px; }
-    .stat .value { font-size: 20px; font-weight: 600; }
-    .card { background: #181b21; border: 1px solid #262a31; border-radius: 12px; padding: 18px; margin-bottom: 18px; }
-    .card h2 { font-size: 15px; margin: 0 0 14px; color: #b6bcc6; }
-    .pill { display: inline-block; padding: 4px 12px; border-radius: 999px; font-size: 13px; font-weight: 600; }
-    .pill.active { background: #18372a; color: #5ee0a0; border: 1px solid #245c43; }
-    .pill.inactive, .pill.failed, .pill.unknown { background: #3a1d22; color: #f3b6bd; border: 1px solid #6b2a33; }
-    .btns { display: flex; flex-wrap: wrap; gap: 10px; }
-    button {
-      padding: 10px 16px; border: 1px solid #2c313a; border-radius: 9px; cursor: pointer;
-      background: #20242c; color: #e6e8eb; font-size: 13px; font-weight: 600;
-    }
-    button:hover { border-color: #3a414d; }
-    button.green { background: #1d4d36; border-color: #25603f; }
-    button.blue  { background: #2b3566; border-color: #3a47a0; }
-    button.red   { background: #4d1f27; border-color: #6b2a33; }
-    form.inline { display: inline; }
-    pre {
-      background: #0b0d11; border: 1px solid #262a31; border-radius: 10px; padding: 14px;
-      font-size: 12px; line-height: 1.45; overflow: auto; max-height: 360px; margin: 0;
-      white-space: pre-wrap; word-break: break-word;
-    }
-    .flash { padding: 10px 14px; border-radius: 9px; font-size: 13px; margin-bottom: 16px; }
-    .flash.ok { background: #18372a; color: #5ee0a0; border: 1px solid #245c43; }
-    .flash.error { background: #3a1d22; color: #f3b6bd; border: 1px solid #6b2a33; }
-    .row { display: flex; align-items: center; justify-content: space-between; }
-    .muted { color: #8b929e; font-size: 12px; }
+    canvas#matrix { position:fixed; inset:0; z-index:0; opacity:.12; }
+    .scan { position:fixed; inset:0; z-index:50; pointer-events:none;
+      background:repeating-linear-gradient(rgba(0,0,0,0) 0 2px, rgba(0,0,0,.22) 2px 4px); }
+    .wrap { position:relative; z-index:1; max-width:900px; margin:0 auto; }
+    header { display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:18px;
+      border-bottom:1px dashed rgba(0,255,102,.3); padding-bottom:10px; }
+    header pre { margin:0; font-size:10px; line-height:1.1; }
+    a.logout { color:var(--grn-dim); font-size:12px; text-decoration:none; }
+    a.logout:hover { color:var(--grn); }
+    .box { border:1px solid var(--grn-dim); border-radius:4px; padding:16px; margin-bottom:16px;
+      background:rgba(0,12,0,.78); box-shadow:inset 0 0 24px rgba(0,255,102,.04); }
+    .box h2 { font-size:13px; margin:0 0 12px; color:var(--grn-dim); letter-spacing:1px; }
+    .box h2::before { content:"// "; }
+    .row { display:flex; justify-content:space-between; align-items:center; }
+    .pill { font-size:13px; font-weight:700; padding:2px 6px; border:1px solid; }
+    .pill.active { color:var(--grn); border-color:var(--grn); }
+    .pill.inactive { color:var(--red); border-color:var(--red); text-shadow:0 0 5px rgba(255,77,77,.5); }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin-bottom:14px; }
+    .stat { border:1px dashed rgba(0,255,102,.25); padding:10px 12px; }
+    .stat .k { font-size:11px; color:var(--grn-dim); }
+    .stat .v { font-size:19px; font-weight:700; }
+    .btns { display:flex; flex-wrap:wrap; gap:10px; }
+    form.inline { display:inline; margin:0; }
+    button { font:inherit; font-weight:700; cursor:pointer; padding:9px 14px; border-radius:3px;
+      background:transparent; border:1px solid var(--grn); color:var(--grn);
+      text-shadow:0 0 5px rgba(0,255,102,.5); transition:.12s; }
+    button:hover { background:var(--grn); color:#000; text-shadow:none; box-shadow:0 0 14px rgba(0,255,102,.5); }
+    button.warn { border-color:var(--amber); color:var(--amber); }
+    button.warn:hover { background:var(--amber); color:#000; box-shadow:0 0 14px rgba(255,176,0,.5); }
+    button.danger { border-color:var(--red); color:var(--red); }
+    button.danger:hover { background:var(--red); color:#000; box-shadow:0 0 14px rgba(255,77,77,.5); }
+    pre#logs { background:#000a00; border:1px solid rgba(0,255,102,.3); border-radius:3px; padding:12px;
+      font-size:11.5px; line-height:1.45; max-height:340px; overflow:auto; margin:12px 0 0;
+      white-space:pre-wrap; word-break:break-word; color:var(--grn); }
+    .flash { padding:9px 12px; font-size:12px; margin-bottom:14px; border:1px solid; }
+    .flash.ok { color:var(--grn); border-color:var(--grn); }
+    .flash.error { color:var(--red); border-color:var(--red); }
+    .muted { color:var(--grn-dim); font-size:11px; }
+    .cur::after { content:"_"; animation:blink 1s steps(1) infinite; }
+    @keyframes blink { 50% { opacity:0; } }
   </style>
 </head>
 <body>
+  <canvas id="matrix"></canvas>
+  <div class="scan"></div>
   <div class="wrap">
     <header>
-      <h1>🤖 Panel del bot</h1>
-      <a class="logout" href="{{ url_for('logout') }}">Cerrar sesión</a>
+      <pre> ____   _    ____  _____ _
+|  _ \ / \  |  _ \| ____| |    control deck
+| |_) / _ \ | |_) |  _| | |    <span class="cur"></span>
+|  __/ ___ \|  _ <| |___| |___
+|_| /_/   \_\_| \_\_____|_____|  root@RnxZeroPI</pre>
+      <a class="logout" href="{{ url_for('logout') }}">[ logout ]</a>
     </header>
 
     {% with msgs = get_flashed_messages(with_categories=true) %}
-      {% for cat, msg in msgs %}<div class="flash {{ cat }}">{{ msg }}</div>{% endfor %}
+      {% for cat, msg in msgs %}<div class="flash {{ cat }}">{{ '>' if cat=='ok' else '!' }} {{ msg }}</div>{% endfor %}
     {% endwith %}
 
-    <div class="card">
+    <div class="box">
       <div class="row">
-        <h2 style="margin:0;">Estado del bot</h2>
-        <span id="botpill" class="pill {{ 'active' if status == 'active' else 'inactive' }}">{{ status }}</span>
+        <h2>proceso :: discordbot</h2>
+        <span id="botpill" class="pill {{ 'active' if status == 'active' else 'inactive' }}">
+          [ {{ 'ONLINE' if status == 'active' else status|upper }} ]</span>
       </div>
-      <div class="btns" style="margin-top:14px;">
+      <div class="btns" style="margin-top:12px;">
         <form class="inline" method="post" action="{{ url_for('action', name='start') }}">
-          <input type="hidden" name="csrf" value="{{ csrf_token }}">
-          <button class="green" type="submit">▶ Arrancar</button>
+          <input type="hidden" name="csrf" value="{{ csrf_token }}"><button type="submit">[ ./start ]</button>
         </form>
         <form class="inline" method="post" action="{{ url_for('action', name='restart') }}">
-          <input type="hidden" name="csrf" value="{{ csrf_token }}">
-          <button class="blue" type="submit">↻ Reiniciar bot</button>
+          <input type="hidden" name="csrf" value="{{ csrf_token }}"><button type="submit">[ ./restart ]</button>
         </form>
         <form class="inline" method="post" action="{{ url_for('action', name='stop') }}"
-              onsubmit="return confirm('¿Seguro que quieres PARAR el bot?');">
-          <input type="hidden" name="csrf" value="{{ csrf_token }}">
-          <button class="red" type="submit">■ Parar</button>
+              onsubmit="return confirm('¿PARAR el bot?');">
+          <input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="danger" type="submit">[ ./kill ]</button>
         </form>
       </div>
     </div>
 
-    <div class="card">
-      <h2>Estado de la Raspberry</h2>
+    <div class="box">
+      <h2>telemetría :: RnxZeroPI</h2>
       <div class="grid">
-        <div class="stat"><div class="label">CPU</div><div class="value" id="s-cpu">{{ st.cpu if st.cpu is not none else 'N/D' }}{% if st.cpu is not none %} %{% endif %}</div></div>
-        <div class="stat"><div class="label">RAM</div><div class="value" id="s-ram">{% if st.ram_used is not none %}{{ st.ram_used }}/{{ st.ram_total }} MB{% else %}N/D{% endif %}</div></div>
-        <div class="stat"><div class="label">Temperatura</div><div class="value" id="s-temp">{% if st.temp is not none %}{{ st.temp }} °C{% else %}N/D{% endif %}</div></div>
-        <div class="stat"><div class="label">Uptime</div><div class="value" id="s-up">{{ st.uptime }}</div></div>
-        <div class="stat"><div class="label">Disco</div><div class="value" id="s-disk">{% if st.disk_used is not none %}{{ st.disk_used }}/{{ st.disk_total }} GB{% else %}N/D{% endif %}</div></div>
+        <div class="stat"><div class="k">CPU_LOAD</div><div class="v" id="s-cpu">{{ st.cpu ~ ' %' if st.cpu is not none else 'N/D' }}</div></div>
+        <div class="stat"><div class="k">MEM</div><div class="v" id="s-ram">{% if st.ram_used is not none %}{{ st.ram_used }}/{{ st.ram_total }}M{% else %}N/D{% endif %}</div></div>
+        <div class="stat"><div class="k">TEMP</div><div class="v" id="s-temp">{% if st.temp is not none %}{{ st.temp }}°C{% else %}N/D{% endif %}</div></div>
+        <div class="stat"><div class="k">UPTIME</div><div class="v" id="s-up">{{ st.uptime }}</div></div>
+        <div class="stat"><div class="k">DISK</div><div class="v" id="s-disk">{% if st.disk_used is not none %}{{ st.disk_used }}/{{ st.disk_total }}G{% else %}N/D{% endif %}</div></div>
       </div>
       <div class="btns">
         <form class="inline" method="post" action="{{ url_for('action', name='update') }}"
-              onsubmit="return confirm('¿Lanzar la actualización (sistema + bot)? Puede tardar unos minutos.');">
-          <input type="hidden" name="csrf" value="{{ csrf_token }}">
-          <button type="submit">⬆ Actualizar</button>
+              onsubmit="return confirm('¿Lanzar actualización (sistema + bot)? Puede tardar.');">
+          <input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="warn" type="submit">[ ./update ]</button>
         </form>
         <form class="inline" method="post" action="{{ url_for('action', name='reboot') }}"
-              onsubmit="return confirm('¿Seguro que quieres REINICIAR la Raspberry?');">
-          <input type="hidden" name="csrf" value="{{ csrf_token }}">
-          <button class="red" type="submit">⏻ Reiniciar Pi</button>
+              onsubmit="return confirm('¿REINICIAR la Raspberry?');">
+          <input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="danger" type="submit">[ ./reboot ]</button>
         </form>
       </div>
-      <p class="muted" style="margin-top:10px;">Los datos se actualizan solos cada 5 s.</p>
+      <p class="muted" style="margin-top:10px;">// telemetría refrescada cada 5s</p>
     </div>
 
-    <div class="card">
+    <div class="box">
       <div class="row">
-        <h2 style="margin:0;">Logs del bot</h2>
-        <button onclick="cargarLogs()">↻ Refrescar</button>
+        <h2>tail :: journalctl -u discordbot</h2>
+        <button onclick="cargarLogs()">[ refresh ]</button>
       </div>
-      <pre id="logs" style="margin-top:14px;">Cargando…</pre>
+      <pre id="logs">cargando...</pre>
     </div>
   </div>
 
   <script>
-    async function refrescar() {
-      try {
-        const r = await fetch("{{ url_for('api_status') }}");
-        if (!r.ok) return;
-        const d = await r.json();
-        const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
-        set("s-cpu", d.cpu != null ? d.cpu + " %" : "N/D");
-        set("s-ram", d.ram_used != null ? d.ram_used + "/" + d.ram_total + " MB" : "N/D");
-        set("s-temp", d.temp != null ? d.temp + " °C" : "N/D");
-        set("s-up", d.uptime || "N/D");
-        set("s-disk", d.disk_used != null ? d.disk_used + "/" + d.disk_total + " GB" : "N/D");
-        const pill = document.getElementById("botpill");
-        if (pill) { pill.textContent = d.bot; pill.className = "pill " + (d.bot === "active" ? "active" : "inactive"); }
-      } catch (e) {}
+    const c=document.getElementById('matrix'),x=c.getContext('2d');
+    let W,H,cols,drops;
+    function init(){W=c.width=innerWidth;H=c.height=innerHeight;cols=Math.floor(W/14);drops=Array(cols).fill(1);}
+    init(); addEventListener('resize',init);
+    const chars="01<>[]{}#$%&*ABCDEF0123456789".split("");
+    setInterval(()=>{x.fillStyle="rgba(0,6,0,.08)";x.fillRect(0,0,W,H);
+      x.fillStyle="#00ff66";x.font="14px monospace";
+      drops.forEach((y,i)=>{const ch=chars[Math.random()*chars.length|0];
+        x.fillText(ch,i*14,y*14); if(y*14>H&&Math.random()>.975)drops[i]=0; drops[i]++;});
+    },70);
+
+    async function refrescar(){
+      try{
+        const r=await fetch("{{ url_for('api_status') }}"); if(!r.ok)return;
+        const d=await r.json();
+        const set=(id,v)=>{const el=document.getElementById(id); if(el)el.textContent=v;};
+        set("s-cpu", d.cpu!=null ? d.cpu+" %" : "N/D");
+        set("s-ram", d.ram_used!=null ? d.ram_used+"/"+d.ram_total+"M" : "N/D");
+        set("s-temp", d.temp!=null ? d.temp+"°C" : "N/D");
+        set("s-up", d.uptime||"N/D");
+        set("s-disk", d.disk_used!=null ? d.disk_used+"/"+d.disk_total+"G" : "N/D");
+        const p=document.getElementById("botpill");
+        if(p){ const on=d.bot==="active"; p.textContent="[ "+(on?"ONLINE":d.bot.toUpperCase())+" ]"; p.className="pill "+(on?"active":"inactive"); }
+      }catch(e){}
     }
-    async function cargarLogs() {
-      const pre = document.getElementById("logs");
-      try {
-        const r = await fetch("{{ url_for('logs') }}");
-        pre.textContent = await r.text();
-        pre.scrollTop = pre.scrollHeight;
-      } catch (e) { pre.textContent = "Error cargando logs."; }
+    async function cargarLogs(){
+      const pre=document.getElementById("logs");
+      try{ const r=await fetch("{{ url_for('logs') }}"); pre.textContent=await r.text(); pre.scrollTop=pre.scrollHeight; }
+      catch(e){ pre.textContent="error cargando logs."; }
     }
-    cargarLogs();
-    setInterval(refrescar, 5000);
+    cargarLogs(); setInterval(refrescar,5000);
   </script>
 </body>
 </html>

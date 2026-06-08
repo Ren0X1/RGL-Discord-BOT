@@ -3,46 +3,74 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Panel · Acceso</title>
+  <title>root@RnxZeroPI — login</title>
   <style>
-    :root { color-scheme: dark; }
+    :root { color-scheme: dark; --grn:#00ff66; --grn-dim:#0a9; --bg:#000600; }
     * { box-sizing: border-box; }
+    html,body { height:100%; }
     body {
-      margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-      background: #0f1115; color: #e6e8eb;
+      margin:0; background:var(--bg); color:var(--grn);
+      font-family: ui-monospace,'JetBrains Mono','Cascadia Code','Fira Code',Consolas,'Courier New',monospace;
+      display:flex; align-items:center; justify-content:center; overflow:hidden;
     }
-    .card {
-      background: #181b21; border: 1px solid #262a31; border-radius: 14px;
-      padding: 32px; width: 320px; box-shadow: 0 10px 40px rgba(0,0,0,.4);
+    canvas#matrix { position:fixed; inset:0; z-index:0; opacity:.25; }
+    .scan { position:fixed; inset:0; z-index:2; pointer-events:none;
+      background:repeating-linear-gradient(rgba(0,0,0,0) 0 2px, rgba(0,0,0,.25) 2px 4px); }
+    .term {
+      position:relative; z-index:1; width:360px; background:rgba(0,12,0,.85);
+      border:1px solid var(--grn); border-radius:4px; padding:22px 24px;
+      box-shadow:0 0 22px rgba(0,255,102,.35), inset 0 0 30px rgba(0,255,102,.05);
+      text-shadow:0 0 6px rgba(0,255,102,.6);
     }
-    h1 { margin: 0 0 4px; font-size: 20px; }
-    p.sub { margin: 0 0 20px; color: #8b929e; font-size: 13px; }
-    label { display: block; font-size: 13px; color: #b6bcc6; margin-bottom: 6px; }
-    input {
-      width: 100%; padding: 11px 12px; border-radius: 9px; border: 1px solid #2c313a;
-      background: #0f1115; color: #e6e8eb; font-size: 14px; margin-bottom: 16px;
-    }
-    input:focus { outline: none; border-color: #5865f2; }
-    button {
-      width: 100%; padding: 11px; border: none; border-radius: 9px; cursor: pointer;
-      background: #5865f2; color: #fff; font-size: 14px; font-weight: 600;
-    }
-    button:hover { background: #4752c4; }
-    .flash { background: #3a1d22; border: 1px solid #6b2a33; color: #f3b6bd;
-             padding: 9px 12px; border-radius: 9px; font-size: 13px; margin-bottom: 16px; }
+    .bar { display:flex; gap:6px; margin:-8px -8px 16px; font-size:11px; color:var(--grn-dim);
+      border-bottom:1px dashed rgba(0,255,102,.3); padding-bottom:8px; }
+    pre.logo { margin:0 0 10px; font-size:11px; line-height:1.1; color:var(--grn); }
+    .line { font-size:12px; color:var(--grn-dim); margin:2px 0; }
+    label { display:block; font-size:12px; margin:14px 0 6px; }
+    .inp { display:flex; align-items:center; border:1px solid var(--grn-dim); border-radius:3px;
+      background:#001400; padding:8px 10px; }
+    .inp span { margin-right:8px; color:var(--grn); }
+    input { flex:1; background:transparent; border:none; color:var(--grn); font:inherit; font-size:14px; }
+    input:focus { outline:none; }
+    button { width:100%; margin-top:16px; padding:10px; cursor:pointer; font:inherit; font-weight:700;
+      background:transparent; color:var(--grn); border:1px solid var(--grn); border-radius:3px;
+      text-shadow:0 0 6px rgba(0,255,102,.6); transition:.12s; }
+    button:hover { background:var(--grn); color:#000; text-shadow:none; box-shadow:0 0 16px rgba(0,255,102,.6); }
+    .err { margin-top:14px; border:1px solid #ff4d4d; color:#ff7a7a; padding:8px 10px; font-size:12px;
+      text-shadow:0 0 6px rgba(255,77,77,.5); }
+    .cur::after { content:"_"; animation:blink 1s steps(1) infinite; }
+    @keyframes blink { 50% { opacity:0; } }
   </style>
 </head>
 <body>
-  <form class="card" method="post" action="{{ url_for('login') }}">
-    <h1>🤖 Panel del bot</h1>
-    <p class="sub">Introduce la contraseña para continuar</p>
+  <canvas id="matrix"></canvas>
+  <div class="scan"></div>
+  <form class="term" method="post" action="{{ url_for('login') }}">
+    <div class="bar">root@RnxZeroPI:~# ./panel</div>
+    <pre class="logo">  ___  _   _ ___ _    ___  ___
+ | _ )/_\ | _ \ |  / _ \/ __|
+ | _ \ _ \|   / |_| (_) \__ \
+ |___/_/ \_\_|_\____\___/|___/</pre>
+    <div class="line">> sistema: RnxZeroPI (Raspberry Pi)</div>
+    <div class="line">> acceso restringido <span class="cur"></span></div>
     {% with msgs = get_flashed_messages() %}
-      {% if msgs %}<div class="flash">{{ msgs[0] }}</div>{% endif %}
+      {% if msgs %}<div class="err">! {{ msgs[0] }}</div>{% endif %}
     {% endwith %}
-    <label for="password">Contraseña</label>
-    <input type="password" id="password" name="password" autofocus required>
-    <button type="submit">Entrar</button>
+    <label>AUTH :: contraseña</label>
+    <div class="inp"><span>&gt;</span><input type="password" name="password" autofocus required></div>
+    <button type="submit">[ AUTENTICAR ]</button>
   </form>
+  <script>
+    const c=document.getElementById('matrix'),x=c.getContext('2d');
+    let W,H,cols,drops;
+    function init(){W=c.width=innerWidth;H=c.height=innerHeight;cols=Math.floor(W/14);drops=Array(cols).fill(1);}
+    init(); addEventListener('resize',init);
+    const chars="01<>[]{}#$%&*ABCDEF0123456789".split("");
+    setInterval(()=>{x.fillStyle="rgba(0,6,0,.08)";x.fillRect(0,0,W,H);
+      x.fillStyle="#00ff66";x.font="14px monospace";
+      drops.forEach((y,i)=>{const ch=chars[Math.random()*chars.length|0];
+        x.fillText(ch,i*14,y*14); if(y*14>H&&Math.random()>.975)drops[i]=0; drops[i]++;});
+    },60);
+  </script>
 </body>
 </html>
