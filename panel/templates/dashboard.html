@@ -169,10 +169,15 @@
     }
     async function cargarLogs(){
       const pre=document.getElementById("logs");
-      try{ const r=await fetch("{{ url_for('logs') }}"); pre.textContent=await r.text(); pre.scrollTop=pre.scrollHeight; }
+      const abajo = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 30;
+      try{
+        const r=await fetch("{{ url_for('logs') }}");
+        pre.textContent=await r.text();
+        if(abajo) pre.scrollTop=pre.scrollHeight;   // solo auto-scroll si ya estabas abajo
+      }
       catch(e){ pre.textContent="error cargando logs."; }
     }
-    cargarLogs(); setInterval(refrescar,5000);
+    cargarLogs(); setInterval(refrescar,5000); setInterval(cargarLogs,5000);
 
     // ---- gráficas (canvas vanilla) ----
     function dibujar(id, valores, max, color){

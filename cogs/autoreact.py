@@ -1,12 +1,12 @@
 """
 Módulo 11 — Auto-reacción por rol.
 
-Cuando un miembro que tiene el rol REACT_ROLE_ID escribe un mensaje en
-cualquier canal de texto, el bot añade una reacción con un emoji elegido al
-azar. El pool de emojis es la lista REACT_EMOJIS (caras por defecto) más, si
-REACT_USE_SERVER_EMOJIS está activo, los emojis propios del servidor.
+Cuando un miembro con el rol REACT_ROLE_ID escribe un mensaje en cualquier canal
+de texto, el bot añade una reacción con un emoji al azar. El pool es REACT_EMOJIS
+(caras por defecto) más, si REACT_USE_SERVER_EMOJIS está activo, los emojis del
+servidor que el bot REALMENTE pueda usar (disponibles y no restringidos por rol).
 
-El bot necesita el permiso "Añadir reacciones".
+El bot necesita el permiso "Añadir reacciones" en el canal.
 """
 
 import logging
@@ -34,16 +34,26 @@ class AutoReact(commands.Cog):
         if not any(r.id == config.REACT_ROLE_ID for r in message.author.roles):
             return
 
+        # Comprobar permiso de reaccionar en este canal antes de intentarlo
+        perms = message.channel.permissions_for(message.guild.me)
+        if not perms.add_reactions:
+            log.warning("Falta el permiso 'Añadir reacciones' en #%s", message.channel)
+            return
+
         pool = list(config.REACT_EMOJIS)
-        if config.REACT_USE_SERVER_EMOJIS and message.guild.emojis:
-            pool += list(message.guild.emojis)
+        if config.REACT_USE_SERVER_EMOJIS:
+            # Solo emojis del servidor que el bot pueda usar de verdad
+            pool += [e for e in message.guild.emojis if e.available and e.is_usable()]
         if not pool:
             return
 
+        emoji = _rng.choice(pool)
         try:
-            await message.add_reaction(_rng.choice(pool))
-        except discord.HTTPException:
-            log.warning("No pude reaccionar (¿emoji válido? ¿permiso de reacciones?)")
+            await message.add_reaction(emoji)
+        except discord.Forbidden:
+            log.warning("Sin permiso para reaccionar en #%s", message.channel)
+        except discord.HTTPException as exc:
+            log.warning("No pude reaccionar con %r: %s", str(emoji), exc)
 
 
 async def setup(bot):
