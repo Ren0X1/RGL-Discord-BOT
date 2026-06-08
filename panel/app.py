@@ -1,0 +1,217 @@
+"""
+Panel web de control — v1
+
+Permite, desde el navegador y en la red local:
+  - Ver el estado del bot y de la Raspberry (CPU/RAM/temperatura/uptime/disco).
+  - Arrancar / parar / reiniciar el bot.
+  - Reiniciar la Pi y lanzar la actualización (startup.sh).
+  - Ver los últimos logs del bot.
+
+Corre como un servicio aparte (panel.service), como el usuario 'renox', y solo
+puede ejecutar una lista cerrada de comandos con sudo (ver /etc/sudoers.d/discordpanel).
+Protegido con contraseña (PANEL_PASSWORD en el .env). Pensado para red local.
+"""
+
+import os
+import time
+import shutil
+import secrets
+import hmac
+import functools
+import subprocess
+
+from flask import (
+    Flask, request, session, redirect, url_for, render_template, flash, jsonify, Response
+)
+from dotenv import load_dotenv
+from waitress import serve
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BOT_DIR = os.path.dirname(BASE_DIR)            # /home/renox/discord-bot
+load_dotenv(os.path.join(BOT_DIR, ".env"))
+
+PANEL_PASSWORD = os.getenv("PANEL_PASSWORD", "")
+PANEL_PORT = int(os.getenv("PANEL_PORT", "8080"))
+SECRET = os.getenv("PANEL_SECRET_KEY") or secrets.token_hex(32)
+SERVICE = "discordbot"
+
+# Comandos privilegiados. DEBEN coincidir EXACTAMENTE con /etc/sudoers.d/discordpanel
+ACCIONES = {
+    "start":   ["sudo", "/usr/bin/systemctl", "start", SERVICE],
+    "stop":    ["sudo", "/usr/bin/systemctl", "stop", SERVICE],
+    "restart": ["sudo", "/usr/bin/systemctl", "restart", SERVICE],
+    "reboot":  ["sudo", "/usr/bin/systemctl", "reboot"],
+    "update":  ["sudo", "/bin/bash", os.path.join(BOT_DIR, "startup.sh")],
+}
+
+app = Flask(__name__)
+app.secret_key = SECRET
+
+
+# ---------- utilidades de autenticación ----------
+def login_required(f):
+    @functools.wraps(f)
+    def wrap(*args, **kwargs):
+        if not session.get("auth"):
+            return redirect(url_for("login"))
+        return f(*args, **kwargs)
+    return wrap
+
+
+@app.context_processor
+def inject_csrf():
+    if "csrf" not in session:
+        session["csrf"] = secrets.token_hex(16)
+    return {"csrf_token": session.get("csrf", "")}
+
+
+# ---------- lectura del sistema ----------
+def bot_status():
+    try:
+        r = subprocess.run(["/usr/bin/systemctl", "is-active", SERVICE],
+                           capture_output=True, text=True, timeout=10)
+        return r.stdout.strip() or "unknown"
+    except Exception:
+        return "unknown"
+
+
+def _fmt_uptime(seg):
+    if seg is None:
+        return "N/D"
+    d, seg = divmod(int(seg), 86400)
+    h, seg = divmod(seg, 3600)
+    m, _ = divmod(seg, 60)
+    partes = []
+    if d:
+        partes.append(f"{d}d")
+    if h:
+        partes.append(f"{h}h")
+    partes.append(f"{m}m")
+    return " ".join(partes)
+
+
+def stats():
+    d = {}
+    # CPU
+    try:
+        def rd():
+            with open("/proc/stat") as f:
+                n = list(map(int, f.readline().split()[1:]))
+            return n[3] + (n[4] if len(n) > 4 else 0), sum(n)
+        i1, t1 = rd()
+        time.sleep(0.3)
+        i2, t2 = rd()
+        d["cpu"] = round((1 - (i2 - i1) / (t2 - t1)) * 100) if t2 > t1 else None
+    except Exception:
+        d["cpu"] = None
+    # RAM
+    try:
+        info = {}
+        with open("/proc/meminfo") as f:
+            for linea in f:
+                k, _, v = linea.partition(":")
+                info[k] = int(v.strip().split()[0])
+        tot = info["MemTotal"]
+        av = info.get("MemAvailable", info.get("MemFree", 0))
+        d["ram_used"] = round((tot - av) / 1024)
+        d["ram_total"] = round(tot / 1024)
+    except Exception:
+        d["ram_used"] = d["ram_total"] = None
+    # Temperatura
+    try:
+        with open("/sys/class/thermal/thermal_zone0/temp") as f:
+            d["temp"] = round(int(f.read()) / 1000, 1)
+    except Exception:
+        d["temp"] = None
+    # Uptime del sistema
+    try:
+        with open("/proc/uptime") as f:
+            d["uptime"] = _fmt_uptime(float(f.read().split()[0]))
+    except Exception:
+        d["uptime"] = "N/D"
+    # Disco
+    try:
+        du = shutil.disk_usage("/")
+        d["disk_used"] = round(du.used / 1e9, 1)
+        d["disk_total"] = round(du.total / 1e9, 1)
+    except Exception:
+        d["disk_used"] = d["disk_total"] = None
+    return d
+
+
+# ---------- rutas ----------
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        pw = request.form.get("password", "")
+        if PANEL_PASSWORD and hmac.compare_digest(pw, PANEL_PASSWORD):
+            session["auth"] = True
+            return redirect(url_for("dashboard"))
+        flash("Contraseña incorrecta.", "error")
+    return render_template("login.html")
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
+@app.route("/")
+@login_required
+def dashboard():
+    return render_template("dashboard.html", status=bot_status(), st=stats())
+
+
+@app.route("/api/status")
+@login_required
+def api_status():
+    data = stats()
+    data["bot"] = bot_status()
+    return jsonify(data)
+
+
+@app.route("/action/<name>", methods=["POST"])
+@login_required
+def action(name):
+    if request.form.get("csrf") != session.get("csrf"):
+        flash("Token de seguridad inválido. Recarga la página.", "error")
+        return redirect(url_for("dashboard"))
+    if name not in ACCIONES:
+        flash("Acción desconocida.", "error")
+        return redirect(url_for("dashboard"))
+    cmd = ACCIONES[name]
+    try:
+        if name in ("reboot", "update"):
+            subprocess.Popen(cmd)  # no esperamos (reboot corta todo; update tarda)
+            flash(f"Acción '{name}' lanzada.", "ok")
+        else:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            if r.returncode == 0:
+                flash(f"Acción '{name}' ejecutada correctamente.", "ok")
+            else:
+                flash(f"Error en '{name}': {(r.stderr or '').strip()[:200]}", "error")
+    except Exception as e:
+        flash(f"Error ejecutando '{name}': {e}", "error")
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/logs")
+@login_required
+def logs():
+    try:
+        r = subprocess.run(
+            ["sudo", "/usr/bin/journalctl", "-u", SERVICE, "-n", "80", "--no-pager"],
+            capture_output=True, text=True, timeout=15,
+        )
+        texto = r.stdout or r.stderr or "(sin salida)"
+    except Exception as e:
+        texto = f"Error leyendo logs: {e}"
+    return Response(texto, mimetype="text/plain")
+
+
+if __name__ == "__main__":
+    if not PANEL_PASSWORD:
+        print("⚠️  PANEL_PASSWORD está vacío en el .env; nadie podrá entrar. Defínelo.")
+    print(f"Panel escuchando en http://0.0.0.0:{PANEL_PORT}")
+    serve(app, host="0.0.0.0", port=PANEL_PORT)

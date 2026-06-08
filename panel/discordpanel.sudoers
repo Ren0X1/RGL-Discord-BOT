@@ -1,0 +1,4 @@
+# Permisos mínimos para que el panel (usuario renox) controle el bot y la Pi
+# SIN contraseña, pero SOLO estos comandos exactos.
+# Instalar en: /etc/sudoers.d/discordpanel  (modo 440)
+renox ALL=(root) NOPASSWD: /usr/bin/systemctl start discordbot, /usr/bin/systemctl stop discordbot, /usr/bin/systemctl restart discordbot, /usr/bin/systemctl reboot, /bin/bash /home/renox/discord-bot/startup.sh, /usr/bin/journalctl -u discordbot -n 80 --no-pager

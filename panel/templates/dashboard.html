@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Panel del bot</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: #0f1115; color: #e6e8eb; padding: 24px;
+    }
+    .wrap { max-width: 880px; margin: 0 auto; }
+    header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 22px; }
+    header h1 { font-size: 20px; margin: 0; }
+    a.logout { color: #8b929e; font-size: 13px; text-decoration: none; }
+    a.logout:hover { color: #e6e8eb; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 20px; }
+    .stat { background: #181b21; border: 1px solid #262a31; border-radius: 12px; padding: 14px 16px; }
+    .stat .label { font-size: 12px; color: #8b929e; margin-bottom: 6px; }
+    .stat .value { font-size: 20px; font-weight: 600; }
+    .card { background: #181b21; border: 1px solid #262a31; border-radius: 12px; padding: 18px; margin-bottom: 18px; }
+    .card h2 { font-size: 15px; margin: 0 0 14px; color: #b6bcc6; }
+    .pill { display: inline-block; padding: 4px 12px; border-radius: 999px; font-size: 13px; font-weight: 600; }
+    .pill.active { background: #18372a; color: #5ee0a0; border: 1px solid #245c43; }
+    .pill.inactive, .pill.failed, .pill.unknown { background: #3a1d22; color: #f3b6bd; border: 1px solid #6b2a33; }
+    .btns { display: flex; flex-wrap: wrap; gap: 10px; }
+    button {
+      padding: 10px 16px; border: 1px solid #2c313a; border-radius: 9px; cursor: pointer;
+      background: #20242c; color: #e6e8eb; font-size: 13px; font-weight: 600;
+    }
+    button:hover { border-color: #3a414d; }
+    button.green { background: #1d4d36; border-color: #25603f; }
+    button.blue  { background: #2b3566; border-color: #3a47a0; }
+    button.red   { background: #4d1f27; border-color: #6b2a33; }
+    form.inline { display: inline; }
+    pre {
+      background: #0b0d11; border: 1px solid #262a31; border-radius: 10px; padding: 14px;
+      font-size: 12px; line-height: 1.45; overflow: auto; max-height: 360px; margin: 0;
+      white-space: pre-wrap; word-break: break-word;
+    }
+    .flash { padding: 10px 14px; border-radius: 9px; font-size: 13px; margin-bottom: 16px; }
+    .flash.ok { background: #18372a; color: #5ee0a0; border: 1px solid #245c43; }
+    .flash.error { background: #3a1d22; color: #f3b6bd; border: 1px solid #6b2a33; }
+    .row { display: flex; align-items: center; justify-content: space-between; }
+    .muted { color: #8b929e; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>🤖 Panel del bot</h1>
+      <a class="logout" href="{{ url_for('logout') }}">Cerrar sesión</a>
+    </header>
+
+    {% with msgs = get_flashed_messages(with_categories=true) %}
+      {% for cat, msg in msgs %}<div class="flash {{ cat }}">{{ msg }}</div>{% endfor %}
+    {% endwith %}
+
+    <div class="card">
+      <div class="row">
+        <h2 style="margin:0;">Estado del bot</h2>
+        <span id="botpill" class="pill {{ 'active' if status == 'active' else 'inactive' }}">{{ status }}</span>
+      </div>
+      <div class="btns" style="margin-top:14px;">
+        <form class="inline" method="post" action="{{ url_for('action', name='start') }}">
+          <input type="hidden" name="csrf" value="{{ csrf_token }}">
+          <button class="green" type="submit">▶ Arrancar</button>
+        </form>
+        <form class="inline" method="post" action="{{ url_for('action', name='restart') }}">
+          <input type="hidden" name="csrf" value="{{ csrf_token }}">
+          <button class="blue" type="submit">↻ Reiniciar bot</button>
+        </form>
+        <form class="inline" method="post" action="{{ url_for('action', name='stop') }}"
+              onsubmit="return confirm('¿Seguro que quieres PARAR el bot?');">
+          <input type="hidden" name="csrf" value="{{ csrf_token }}">
+          <button class="red" type="submit">■ Parar</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Estado de la Raspberry</h2>
+      <div class="grid">
+        <div class="stat"><div class="label">CPU</div><div class="value" id="s-cpu">{{ st.cpu if st.cpu is not none else 'N/D' }}{% if st.cpu is not none %} %{% endif %}</div></div>
+        <div class="stat"><div class="label">RAM</div><div class="value" id="s-ram">{% if st.ram_used is not none %}{{ st.ram_used }}/{{ st.ram_total }} MB{% else %}N/D{% endif %}</div></div>
+        <div class="stat"><div class="label">Temperatura</div><div class="value" id="s-temp">{% if st.temp is not none %}{{ st.temp }} °C{% else %}N/D{% endif %}</div></div>
+        <div class="stat"><div class="label">Uptime</div><div class="value" id="s-up">{{ st.uptime }}</div></div>
+        <div class="stat"><div class="label">Disco</div><div class="value" id="s-disk">{% if st.disk_used is not none %}{{ st.disk_used }}/{{ st.disk_total }} GB{% else %}N/D{% endif %}</div></div>
+      </div>
+      <div class="btns">
+        <form class="inline" method="post" action="{{ url_for('action', name='update') }}"
+              onsubmit="return confirm('¿Lanzar la actualización (sistema + bot)? Puede tardar unos minutos.');">
+          <input type="hidden" name="csrf" value="{{ csrf_token }}">
+          <button type="submit">⬆ Actualizar</button>
+        </form>
+        <form class="inline" method="post" action="{{ url_for('action', name='reboot') }}"
+              onsubmit="return confirm('¿Seguro que quieres REINICIAR la Raspberry?');">
+          <input type="hidden" name="csrf" value="{{ csrf_token }}">
+          <button class="red" type="submit">⏻ Reiniciar Pi</button>
+        </form>
+      </div>
+      <p class="muted" style="margin-top:10px;">Los datos se actualizan solos cada 5 s.</p>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <h2 style="margin:0;">Logs del bot</h2>
+        <button onclick="cargarLogs()">↻ Refrescar</button>
+      </div>
+      <pre id="logs" style="margin-top:14px;">Cargando…</pre>
+    </div>
+  </div>
+
+  <script>
+    async function refrescar() {
+      try {
+        const r = await fetch("{{ url_for('api_status') }}");
+        if (!r.ok) return;
+        const d = await r.json();
+        const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+        set("s-cpu", d.cpu != null ? d.cpu + " %" : "N/D");
+        set("s-ram", d.ram_used != null ? d.ram_used + "/" + d.ram_total + " MB" : "N/D");
+        set("s-temp", d.temp != null ? d.temp + " °C" : "N/D");
+        set("s-up", d.uptime || "N/D");
+        set("s-disk", d.disk_used != null ? d.disk_used + "/" + d.disk_total + " GB" : "N/D");
+        const pill = document.getElementById("botpill");
+        if (pill) { pill.textContent = d.bot; pill.className = "pill " + (d.bot === "active" ? "active" : "inactive"); }
+      } catch (e) {}
+    }
+    async function cargarLogs() {
+      const pre = document.getElementById("logs");
+      try {
+        const r = await fetch("{{ url_for('logs') }}");
+        pre.textContent = await r.text();
+        pre.scrollTop = pre.scrollHeight;
+      } catch (e) { pre.textContent = "Error cargando logs."; }
+    }
+    cargarLogs();
+    setInterval(refrescar, 5000);
+  </script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+[Unit]
+Description=Panel web de control del bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=renox
+WorkingDirectory=/home/renox/discord-bot
+ExecStart=/home/renox/discord-bot/venv/bin/python /home/renox/discord-bot/panel/app.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
