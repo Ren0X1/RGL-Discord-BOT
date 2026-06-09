@@ -14,6 +14,7 @@ Protegido con contraseña (PANEL_PASSWORD en el .env). Pensado para red local.
 
 import os
 import time
+import json
 import shutil
 import secrets
 import hmac
@@ -216,6 +217,26 @@ def escribir_env(form):
 def favicon():
     return send_from_directory(os.path.join(BASE_DIR, "static"), "favicon.ico",
                                mimetype="image/x-icon")
+
+
+@app.route("/manifest.webmanifest")
+def manifest():
+    data = {
+        "name": "RNX Panel",
+        "short_name": "RNX",
+        "description": "Panel de control del bot",
+        "start_url": "/",
+        "scope": "/",
+        "display": "standalone",
+        "orientation": "portrait",
+        "background_color": "#000600",
+        "theme_color": "#000600",
+        "icons": [
+            {"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+            {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"},
+        ],
+    }
+    return Response(json.dumps(data), mimetype="application/manifest+json")
 
 
 @app.route("/login", methods=["GET", "POST"])
