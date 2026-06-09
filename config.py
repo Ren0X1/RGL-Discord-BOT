@@ -84,6 +84,15 @@ REACT_USE_SERVER_EMOJIS = _bool("REACT_USE_SERVER_EMOJIS", True)
 # --- 9) Aviso al owner cuando el bot arranca ---
 OWNER_USER_ID = _int("OWNER_USER_ID")
 
+# --- 10) Canales-contador (estadísticas en el nombre del canal de voz) ---
+STATS_MEMBERS_CHANNEL_ID = _int("STATS_MEMBERS_CHANNEL_ID")
+STATS_VOICE_CHANNEL_ID = _int("STATS_VOICE_CHANNEL_ID")
+STATS_MEMBERS_NAME = os.getenv("STATS_MEMBERS_NAME", "👥 Miembros: {count}")
+STATS_VOICE_NAME = os.getenv("STATS_VOICE_NAME", "🔊 En voz: {count}")
+STATS_COUNT_BOTS = _bool("STATS_COUNT_BOTS", False)
+# Discord limita el renombrado de canales (~2 cada 10 min). Mínimo razonable: 300s.
+STATS_UPDATE_SECONDS = max(300, _int("STATS_UPDATE_SECONDS", 360))
+
 # --- General ---
 TIMEZONE = os.getenv("TIMEZONE", "Europe/Madrid")
 

@@ -40,6 +40,8 @@ COGS = (
     "cogs.scrim",
     "cogs.autoreact",
     "cogs.owner_notify",
+    "cogs.serverinfo",
+    "cogs.serverstats",
 )
 
 

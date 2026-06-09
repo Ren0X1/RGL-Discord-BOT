@@ -41,6 +41,15 @@ PANEL_PORT = int(os.getenv("PANEL_PORT", "8080"))
 SECRET = os.getenv("PANEL_SECRET_KEY") or secrets.token_hex(32)
 SERVICE = "discordbot"
 
+# HTTPS opcional (si ambos archivos existen, sirve por TLS)
+PANEL_SSL_CERT = os.getenv("PANEL_SSL_CERT", "").strip()
+PANEL_SSL_KEY = os.getenv("PANEL_SSL_KEY", "").strip()
+
+# Anti-fuerza-bruta del login
+MAX_FALLOS = 5
+BLOQUEO_SEG = 300
+_intentos = {}  # ip -> [fallos, bloqueado_hasta]
+
 # Comandos privilegiados. DEBEN coincidir EXACTAMENTE con /etc/sudoers.d/discordpanel
 ACCIONES = {
     "start":   ["sudo", "/usr/bin/systemctl", "start", SERVICE],
@@ -204,12 +213,27 @@ def escribir_env(form):
         f.write("\n".join(nuevas) + "\n")
 @app.route("/login", methods=["GET", "POST"])
 def login():
+    ip = request.remote_addr or "?"
     if request.method == "POST":
+        reg = _intentos.get(ip, [0, 0])
+        ahora = time.time()
+        if reg[1] > ahora:
+            flash(f"Demasiados intentos. Espera {int(reg[1] - ahora)}s.", "error")
+            return render_template("login.html")
         pw = request.form.get("password", "")
         if PANEL_PASSWORD and hmac.compare_digest(pw, PANEL_PASSWORD):
+            _intentos.pop(ip, None)
             session["auth"] = True
             return redirect(url_for("dashboard"))
-        flash("Contraseña incorrecta.", "error")
+        # fallo
+        reg[0] += 1
+        if reg[0] >= MAX_FALLOS:
+            reg[1] = ahora + BLOQUEO_SEG
+            reg[0] = 0
+            flash(f"Demasiados intentos fallidos. Bloqueado {BLOQUEO_SEG // 60} min.", "error")
+        else:
+            flash(f"Contraseña incorrecta. ({reg[0]}/{MAX_FALLOS})", "error")
+        _intentos[ip] = reg
     return render_template("login.html")
 
 
@@ -321,8 +345,26 @@ def logs():
     return Response(texto, mimetype="text/plain")
 
 
-if __name__ == "__main__":
+def main():
     if not PANEL_PASSWORD:
         print("⚠️  PANEL_PASSWORD está vacío en el .env; nadie podrá entrar. Defínelo.")
-    print(f"Panel escuchando en http://0.0.0.0:{PANEL_PORT}")
-    serve(app, host="0.0.0.0", port=PANEL_PORT)
+    host = "0.0.0.0"
+    usar_https = PANEL_SSL_CERT and PANEL_SSL_KEY and \
+        os.path.exists(PANEL_SSL_CERT) and os.path.exists(PANEL_SSL_KEY)
+    if usar_https:
+        from cheroot import wsgi
+        from cheroot.ssl.builtin import BuiltinSSLAdapter
+        print(f"Panel escuchando en https://0.0.0.0:{PANEL_PORT} (TLS)")
+        srv = wsgi.Server((host, PANEL_PORT), app)
+        srv.ssl_adapter = BuiltinSSLAdapter(PANEL_SSL_CERT, PANEL_SSL_KEY)
+        try:
+            srv.start()
+        except KeyboardInterrupt:
+            srv.stop()
+    else:
+        print(f"Panel escuchando en http://0.0.0.0:{PANEL_PORT}")
+        serve(app, host=host, port=PANEL_PORT)
+
+
+if __name__ == "__main__":
+    main()
