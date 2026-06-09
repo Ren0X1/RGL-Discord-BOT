@@ -352,15 +352,11 @@ def main():
     usar_https = PANEL_SSL_CERT and PANEL_SSL_KEY and \
         os.path.exists(PANEL_SSL_CERT) and os.path.exists(PANEL_SSL_KEY)
     if usar_https:
-        from cheroot import wsgi
-        from cheroot.ssl.builtin import BuiltinSSLAdapter
         print(f"Panel escuchando en https://0.0.0.0:{PANEL_PORT} (TLS)")
-        srv = wsgi.Server((host, PANEL_PORT), app)
-        srv.ssl_adapter = BuiltinSSLAdapter(PANEL_SSL_CERT, PANEL_SSL_KEY)
-        try:
-            srv.start()
-        except KeyboardInterrupt:
-            srv.stop()
+        from werkzeug.serving import run_simple
+        run_simple(host, PANEL_PORT, app,
+                   ssl_context=(PANEL_SSL_CERT, PANEL_SSL_KEY),
+                   threaded=True, use_reloader=False, use_debugger=False)
     else:
         print(f"Panel escuchando en http://0.0.0.0:{PANEL_PORT}")
         serve(app, host=host, port=PANEL_PORT)
