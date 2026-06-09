@@ -93,6 +93,10 @@ STATS_COUNT_BOTS = _bool("STATS_COUNT_BOTS", False)
 # Discord limita el renombrado de canales (~2 cada 10 min). Mínimo razonable: 300s.
 STATS_UPDATE_SECONDS = max(300, _int("STATS_UPDATE_SECONDS", 360))
 
+# --- 11) Auto-sincronizar la plantilla del servidor ---
+TEMPLATE_AUTO_SYNC = _bool("TEMPLATE_AUTO_SYNC", False)
+TEMPLATE_SYNC_MINUTES = max(10, _int("TEMPLATE_SYNC_MINUTES", 60))
+
 # --- General ---
 TIMEZONE = os.getenv("TIMEZONE", "Europe/Madrid")
 

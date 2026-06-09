@@ -42,6 +42,7 @@ COGS = (
     "cogs.owner_notify",
     "cogs.serverinfo",
     "cogs.serverstats",
+    "cogs.template_sync",
 )
 
 
