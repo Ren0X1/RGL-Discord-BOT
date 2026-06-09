@@ -23,7 +23,8 @@ import threading
 import collections
 
 from flask import (
-    Flask, request, session, redirect, url_for, render_template, flash, jsonify, Response
+    Flask, request, session, redirect, url_for, render_template, flash, jsonify, Response,
+    send_from_directory
 )
 from dotenv import load_dotenv
 from waitress import serve
@@ -211,6 +212,12 @@ def escribir_env(form):
         nuevas.append(linea)
     with open(ENV_PATH, "w", encoding="utf-8") as f:
         f.write("\n".join(nuevas) + "\n")
+@app.route("/favicon.ico")
+def favicon():
+    return send_from_directory(os.path.join(BASE_DIR, "static"), "favicon.ico",
+                               mimetype="image/x-icon")
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     ip = request.remote_addr or "?"
