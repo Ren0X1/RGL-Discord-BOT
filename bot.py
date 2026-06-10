@@ -43,6 +43,7 @@ COGS = (
     "cogs.serverinfo",
     "cogs.serverstats",
     "cogs.template_sync",
+    "cogs.polls",
 )
 
 
