@@ -44,6 +44,7 @@ COGS = (
     "cogs.serverstats",
     "cogs.template_sync",
     "cogs.polls",
+    "cogs.tickets",
 )
 
 

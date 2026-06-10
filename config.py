@@ -97,6 +97,20 @@ STATS_UPDATE_SECONDS = max(300, _int("STATS_UPDATE_SECONDS", 360))
 TEMPLATE_AUTO_SYNC = _bool("TEMPLATE_AUTO_SYNC", False)
 TEMPLATE_SYNC_MINUTES = max(10, _int("TEMPLATE_SYNC_MINUTES", 60))
 
+# --- 12) Sistema de tickets ---
+TICKET_PANEL_CHANNEL_ID = _int("TICKET_PANEL_CHANNEL_ID")   # canal donde va el mensaje-panel
+TICKET_CATEGORY_ID = _int("TICKET_CATEGORY_ID")             # categoría donde se crean los tickets
+TICKET_STAFF_ROLE_IDS = _ids("TICKET_STAFF_ROLE_IDS")       # roles que atienden y cierran tickets
+TICKET_PANEL_TITLE = os.getenv("TICKET_PANEL_TITLE", "🎫 Soporte")
+TICKET_PANEL_TEXT = os.getenv(
+    "TICKET_PANEL_TEXT",
+    "¿Necesitas ayuda? Pulsa el botón de abajo para abrir un ticket y el staff te atenderá.",
+)
+TICKET_OPEN_MESSAGE = os.getenv(
+    "TICKET_OPEN_MESSAGE",
+    "Gracias por abrir un ticket. Explica tu consulta y el staff te atenderá lo antes posible.",
+)
+
 # --- General ---
 TIMEZONE = os.getenv("TIMEZONE", "Europe/Madrid")
 
