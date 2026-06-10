@@ -1,85 +1,149 @@
-# Bot de Discord — logs, voz temporal, recordatorios y avisos de directo
+# RGL Discord BOT
 
-Bot en Python (discord.py 2.x) con cuatro módulos:
-
-1. **Logs** — registra acciones del servidor en un canal (mensajes borrados/editados, entradas/salidas, baneos con moderador, cambios de apodo/roles, cambios de avatar/nombre, creación/borrado de canales y movimientos de voz).
-2. **Voz temporal** — al entrar a un canal "lobby" se crea un canal propio (límite 10) y se borra solo cuando queda vacío.
-3. **Recordatorios** — `/recordatorio` te escribe por privado en la fecha que indiques.
-4. **Avisos de directo** — cuando alguien con cierto rol empieza a transmitir, avisa con `@everyone` y el enlace.
-5. **Eventos** — `/evento` crea un evento del servidor con rango de fechas e imagen de portada, y avisa con `@everyone` antes de empezar y de acabar.
-6. **Moderación** — `/clear` borra mensajes recientes.
-7. **Stats** — `/stats` muestra el estado del bot y de la máquina (CPU/RAM/temperatura/uptime).
-8. **Bienvenida/despedida + autorol** — mensaje al entrar/salir un miembro y asignación de un rol automático.
-9. **Scrim** — `/scrim` reparte al azar a los de un canal de voz en dos equipos.
-
-El bot, además, se muestra siempre en estado **ausente** (bola amarilla) con una actividad de "Transmitiendo" que apunta a tu enlace (configurable con `STATUS_TEXT` y `STATUS_URL`).
+Bot de Discord **todo-en-uno** con **panel web de control**, autoalojado en una **Raspberry Pi Zero 2 W**. Incluye moderación, registro de auditoría, recordatorios, eventos, encuestas, sistema de tickets, canales-contador, scrims, y un panel web con tema "hacker" para administrar el bot y la máquina desde el navegador (también en remoto).
 
 ---
 
-## 1. Crear el bot en Discord
+## 🧰 Tecnologías
 
-1. Entra en https://discord.com/developers/applications → **New Application**.
-2. Pestaña **Bot** → **Add Bot** → copia el **Token** (lo pegas luego en `.env`).
-3. En esa misma pestaña, activa los tres **Privileged Gateway Intents**:
-   - ✅ Server Members Intent
-   - ✅ Presence Intent
-   - ✅ Message Content Intent
-4. Pestaña **OAuth2 → URL Generator**:
-   - Scopes: `bot` y `applications.commands`
-   - Permisos del bot: `Manage Channels`, `Move Members`, `View Audit Log`, `Ban Members`, `Manage Events`, `Read Messages/View Channels`, `Send Messages`, `Embed Links`, `Read Message History`, `Mention Everyone`, `Manage Roles` (recomendado).
-   - Copia la URL generada, ábrela e invita el bot a tu servidor.
+| Área | Tecnología |
+|------|------------|
+| Lenguaje | Python 3.13 |
+| Bot | [discord.py](https://discordpy.readthedocs.io/) 2.7 (slash commands, botones, vistas persistentes) |
+| Panel web | Flask 3 · waitress (HTTP) · werkzeug TLS (HTTPS) |
+| Base de datos | SQLite (recordatorios, encuestas, tickets) |
+| Config | python-dotenv (`.env`) |
+| Iconos | Pillow (favicon e iconos PWA) |
+| Frontend panel | HTML + CSS + JS vanilla (gráficas en `<canvas>`, sin dependencias) |
+| Servicios | systemd (`discordbot`, `panel`, `bot-startup`) |
+| Despliegue | Git (sincronización desde GitHub) + scripts de arranque/actualización |
+| Acceso remoto | Tailscale (VPN WireGuard, sin abrir puertos) |
+| Hardware | Raspberry Pi Zero 2 W (Raspberry Pi OS) |
 
-## 2. Sacar los IDs que necesitas
+---
 
-En Discord: **Ajustes de usuario → Avanzado → Modo desarrollador (ON)**. Luego clic derecho sobre cada elemento → **Copiar ID**:
+## 🤖 Funcionalidades del bot
 
-- Canal donde quieres los logs → `LOG_CHANNEL_ID`
-- Canal de voz "lobby" → `MAIN_VOICE_CHANNEL_ID`
-- (Opcional) categoría donde crear los canales temporales → `TEMP_VOICE_CATEGORY_ID`
-- Canal donde anunciar directos → `STREAM_ANNOUNCE_CHANNEL_ID`
-- Roles que disparan el aviso de directo → `STREAM_ROLE_IDS` (varios separados por comas)
-- (Opcional) tu servidor → `GUILD_ID` (hace que los comandos `/` aparezcan al instante)
+Cada función vive en su propio *cog* dentro de `cogs/`:
 
-## 3. Configurar y ejecutar en local
+- **Registro de auditoría** (`logs`) — estilo MEE6: mensajes borrados/editados, entradas y salidas, baneos/desbaneos (con el moderador vía audit log), cambios de apodo, roles, avatar y nombre, creación/borrado de canales y movimientos de voz (opcional).
+- **Canales de voz temporales** (`tempvoice`) — al entrar a un canal "lobby" se crea un canal de voz propio que se borra al quedarse vacío.
+- **Recordatorios** (`reminders`) — `/recordatorio`, `/recordatorios`, `/cancelar_recordatorio`. Avisa por privado en la fecha indicada; persisten en SQLite.
+- **Avisos de directos** (`streams`) — anuncia cuando un miembro con cierto rol empieza a emitir en Twitch.
+- **Eventos** (`events`) — `/evento` crea eventos del servidor con rango de fechas, imagen de portada y avisos automáticos antes de empezar/terminar.
+- **Moderación** (`moderation`) — `/clear` borra en bloque los últimos N mensajes (evita el límite de Discord con mensajes antiguos).
+- **Estado** (`stats`) — `/stats` muestra latencia, uptime, CPU, RAM, temperatura y disco de la Pi.
+- **Bienvenidas** (`welcome`) — mensaje de bienvenida/despedida y asignación de autorol a los nuevos.
+- **Scrims y equipos** (`scrim`) — `/scrim` reparte al azar a la gente de un canal de voz en dos equipos y los **mueve**; `/equipos` solo **anuncia** los equipos sin mover.
+- **Auto-reacción** (`autoreact`) — reacciona con un emoji al azar a los mensajes de quien tenga un rol concreto, a ~1 de cada 10 mensajes (configurable con `REACT_CHANCE`). Usa caras por defecto y, si se quiere, los emojis del servidor.
+- **Aviso al owner** (`owner_notify`) — manda un DM al dueño cuando el bot arranca (útil para saber que se ha reiniciado tras un corte de luz).
+- **Información** (`serverinfo`) — `/serverinfo` (datos del servidor) y `/userinfo` (datos de un usuario).
+- **Canales-contador** (`serverstats`) — dos canales de voz bloqueados cuyo nombre muestra el nº de miembros y la gente conectada en voz, actualizándose periódicamente.
+- **Auto-sync de plantilla** (`template_sync`) — mantiene al día la plantilla del servidor: si detecta cambios, la sincroniza sola y lo anuncia en el canal de logs.
+- **Encuestas** (`polls`) — `/encuesta` con 2–10 opciones y **tiempo límite**. Se vota con botones (un voto por persona, cambiable); al terminar borra el mensaje y publica los resultados con barras y porcentajes. Persisten en SQLite (sobreviven a reinicios).
+- **Tickets** (`tickets`) — sistema estilo *Ticket Tool*: panel con botón para abrir, canal privado por ticket dentro de una categoría (solo lo ven el autor y los roles de staff), y cierre con confirmación (solo staff). Botones persistentes.
 
-```bash
-# 1. Instala dependencias (Python 3.10+)
-pip install -r requirements.txt
+### Comandos slash
 
-# 2. Crea tu archivo .env a partir del ejemplo
-cp .env.example .env
-# edita .env y rellena el token y los IDs
+| Comando | Descripción |
+|---------|-------------|
+| `/recordatorio` | Te aviso por privado en la fecha indicada |
+| `/recordatorios` | Lista tus recordatorios pendientes |
+| `/cancelar_recordatorio` | Cancela un recordatorio por su número |
+| `/evento` | Crea un evento del servidor con fechas e imagen |
+| `/clear` | Borra los últimos N mensajes del canal |
+| `/stats` | Estado del bot y de la máquina (CPU/RAM/temperatura) |
+| `/serverinfo` | Información del servidor |
+| `/userinfo` | Información de un usuario |
+| `/scrim` | Reparte a los del canal de voz en dos equipos (los mueve) |
+| `/equipos` | Anuncia dos equipos al azar (no mueve) |
+| `/encuesta` | Crea una encuesta con tiempo límite |
+| `/ticket_panel` | Publica el panel para abrir tickets |
 
-# 3. Arranca el bot
-python bot.py
+---
+
+## 🖥️ Panel web de control
+
+Panel con tema "hacker" (verde sobre negro, lluvia matrix, scanlines) accesible desde el navegador:
+
+- **Estado del bot** en tiempo real (activo/inactivo) y **telemetría** de la Pi: CPU, RAM, temperatura, disco y uptime.
+- **Gráficas históricas** de CPU/RAM/temperatura (~30 min), dibujadas en `<canvas>` sin librerías externas.
+- **Visor de logs** del bot en vivo, con auto-refresco cada 5 s y scroll inteligente.
+- **Editor del `.env`** desde el navegador, con los secretos (token, contraseñas) enmascarados.
+- **Acciones**: iniciar / parar / reiniciar el bot, reiniciar la Pi y lanzar una actualización completa.
+- **Seguridad**: login con límite de intentos y bloqueo temporal por IP; **HTTPS local** opcional (certificado autofirmado).
+- **App en el móvil**: favicon + manifest + iconos para añadirlo a la pantalla de inicio del iPhone como una app a pantalla completa.
+
+---
+
+## ⚙️ Configuración
+
+Toda la configuración va en un archivo `.env` (ver `.env.example` para la lista completa con comentarios). Bloques principales:
+
+- **Bot**: `DISCORD_TOKEN`, `GUILD_ID`, `OWNER_USER_ID`
+- **Logs**: `LOG_CHANNEL_ID`, `LOG_VOICE`, `LOG_BOTS`
+- **Voz temporal**: `MAIN_VOICE_CHANNEL_ID`, `TEMP_VOICE_CATEGORY_ID`, `TEMP_VOICE_LIMIT`
+- **Directos**: `STREAM_ANNOUNCE_CHANNEL_ID`, `STREAM_ROLE_IDS`
+- **Eventos**: `EVENT_ANNOUNCE_CHANNEL_ID`, `EVENT_LEAD_MINUTES`
+- **Bienvenidas**: `WELCOME_CHANNEL_ID`, `AUTOROLE_ID`, mensajes
+- **Scrims**: `SCRIM_TEAM1_CHANNEL_ID`, `SCRIM_TEAM2_CHANNEL_ID`
+- **Auto-reacción**: `REACT_ROLE_ID`, `REACT_EMOJIS`, `REACT_USE_SERVER_EMOJIS`, `REACT_CHANCE`
+- **Canales-contador**: `STATS_MEMBERS_CHANNEL_ID`, `STATS_VOICE_CHANNEL_ID`, nombres, `STATS_UPDATE_SECONDS`
+- **Plantilla**: `TEMPLATE_AUTO_SYNC`, `TEMPLATE_SYNC_MINUTES`
+- **Tickets**: `TICKET_PANEL_CHANNEL_ID`, `TICKET_CATEGORY_ID`, `TICKET_STAFF_ROLE_IDS`, textos
+- **Panel**: `PANEL_PASSWORD`, `PANEL_PORT`, `PANEL_SECRET_KEY`, `PANEL_SSL_CERT`, `PANEL_SSL_KEY`
+
+---
+
+## 📁 Estructura
+
+```
+discord-bot/
+├── bot.py                # arranque del bot y carga de cogs
+├── config.py             # lee toda la configuración del .env
+├── requirements.txt
+├── .env.example          # plantilla de configuración
+├── startup.sh            # arranque: actualiza, sincroniza con GitHub y reinicia
+├── update.sh             # actualización manual completa
+├── cogs/                 # cada funcionalidad en su módulo
+│   ├── logs.py  tempvoice.py  reminders.py  streams.py  events.py
+│   ├── moderation.py  stats.py  welcome.py  scrim.py  autoreact.py
+│   ├── owner_notify.py  serverinfo.py  serverstats.py  template_sync.py
+│   └── polls.py  tickets.py
+├── panel/                # panel web
+│   ├── app.py            # servidor Flask
+│   ├── templates/        # login, dashboard, config (tema hacker)
+│   └── static/           # favicon e iconos PWA
+└── data/                 # bases de datos SQLite (generado, no en git)
 ```
 
-Si todo va bien verás en consola `Conectado como ...`.
+---
 
-## 4. Comandos disponibles
+## 🚀 Despliegue en la Raspberry Pi
 
-- `/recordatorio cuando:<30m | 2h | 3d | 25/12/2026 09:00> mensaje:<texto>`
-- `/recordatorios` — lista los tuyos pendientes
-- `/cancelar_recordatorio id:<número>`
-- `/evento nombre:<texto> inicio:<25/12/2026 18:00> fin:<25/12/2026 21:00> imagen:<url> [channel_id] [descripcion]` — evento con ubicación; las horas se redondean al cuarto de hora siguiente
-- `/clear cantidad:<1-1000>` — borra los últimos N mensajes del canal (requiere permiso Gestionar mensajes)
-- `/stats` — estado del bot y de la máquina (latencia, uptime, CPU, RAM, temperatura, disco)
-- `/scrim canal_id:<id voz>` — reparte al azar a los del canal de voz en dos equipos (requiere permiso Mover miembros)
+El bot y el panel corren como servicios **systemd** y se actualizan solos desde GitHub en cada arranque.
+
+- `discordbot.service` — ejecuta el bot (reinicio automático).
+- `panel.service` — ejecuta el panel web (arranca con la Pi).
+- `bot-startup.service` — al encender, ejecuta `startup.sh`: `apt update/upgrade`, sincroniza el repo (`git reset --hard origin/main`), instala dependencias y reinicia el bot.
+
+Flujo de trabajo: los cambios se suben a **GitHub** y la Pi se sincroniza sola. Para aplicar a mano:
+
+```bash
+bash ~/startup.sh            # sincroniza el repo y reinicia el bot
+sudo systemctl restart panel # aplica cambios del panel
+```
+
+### Acceso remoto (Tailscale)
+
+Con [Tailscale](https://tailscale.com/) instalado, el panel es accesible desde cualquier sitio **sin abrir puertos del router** y cifrado de extremo a extremo:
+
+```bash
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up
+tailscale ip -4              # IP privada 100.x.y.z para entrar al panel
+```
 
 ---
 
-## Notas importantes
-
-- **Avatares/nombres**: se detectan por evento de usuario (Discord no los pone en el audit log). El bot solo loguea cambios de quien comparte tu servidor.
-- **Directos**: funciona con el *estado de streaming* (Twitch/YouTube), que sí tiene URL pública. El "Go Live"/compartir pantalla dentro de un canal de voz **no** tiene enlace público y por eso no se puede anunciar con link.
-- **Recordatorios**: se guardan en `data/reminders.db` (SQLite), así sobreviven a reinicios. Las fechas absolutas se interpretan en la zona horaria de `TIMEZONE` (por defecto `Europe/Madrid`).
-- **Zona horaria**: las fechas se interpretan en `TIMEZONE` (por defecto `Europe/Madrid`). Si está instalado `tzdata` se usa la base oficial; si no, el bot trae un cálculo CET/CEST de respaldo para zonas de Europa central, así que las horas salen bien aunque falte `tzdata`.
-- **Sugerencias de comandos**: si defines `GUILD_ID`, al arrancar el bot registra los comandos en tu servidor y **borra los globales antiguos**, eliminando duplicados u obsoletos. Si los cambios tardan en verse, cierra y abre Discord (Ctrl+R).
-- **Permisos**: el rol del bot debe estar **por encima** de los canales/roles que gestiona, o algunas acciones fallarán por falta de permisos.
-- **Eventos**: el bot necesita el permiso **Gestionar eventos** (Manage Events). Son eventos de tipo externo con **ubicación**: si pasas `channel_id`, se usa el nombre de ese canal como ubicación; si no, pone "Servidor". Las horas de inicio y fin se **redondean al siguiente múltiplo de 15 minutos** (p.ej. 9:51 → 10:00). La imagen debe ser un enlace directo a un `.png`/`.jpg` y pesar menos de 8 MB.
-- **/clear**: solo borra en lote mensajes de **menos de 14 días** (límite de Discord). Los más antiguos se saltan para no provocar bloqueos por *rate limit*; el comando te indica cuántos borró de verdad.
-- **Status amarillo + enlace**: la bola amarilla es el estado "ausente". El enlace solo es *pulsable* si es de `twitch.tv` o `youtube.com`; con un dominio propio se muestra el texto, pero puede no ser clicable. Cambia el texto/URL en `STATUS_TEXT` y `STATUS_URL`.
-
-## Hosting 24/7
-
-Cuando el bot funcione en local, lo desplegamos. La opción gratis más fiable hoy es una VM **Always Free de Oracle Cloud** corriendo el bot con `systemd` o `screen`. Lo vemos paso a paso cuando llegues a ese punto.
+> Proyecto personal autoalojado. La configuración sensible (`.env`), las bases de datos y el entorno virtual no se incluyen en el repositorio.

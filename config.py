@@ -81,6 +81,17 @@ def _emojis(name, default):
 REACT_EMOJIS = _emojis("REACT_EMOJIS", _FACES_POR_DEFECTO)
 REACT_USE_SERVER_EMOJIS = _bool("REACT_USE_SERVER_EMOJIS", True)
 
+
+def _float(name, default):
+    try:
+        return float(os.getenv(name) or default)
+    except (TypeError, ValueError):
+        return default
+
+
+# Probabilidad de reaccionar a un mensaje válido (0.1 = 1 de cada 10 aprox.)
+REACT_CHANCE = min(1.0, max(0.0, _float("REACT_CHANCE", 0.1)))
+
 # --- 9) Aviso al owner cuando el bot arranca ---
 OWNER_USER_ID = _int("OWNER_USER_ID")
 

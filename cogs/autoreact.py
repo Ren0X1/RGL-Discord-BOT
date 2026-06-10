@@ -6,7 +6,8 @@ de texto, el bot añade una reacción con un emoji al azar. El pool es REACT_EMO
 (caras por defecto) más, si REACT_USE_SERVER_EMOJIS está activo, los emojis del
 servidor que el bot REALMENTE pueda usar (disponibles y no restringidos por rol).
 
-El bot necesita el permiso "Añadir reacciones" en el canal.
+El bot necesita el permiso "Añadir reacciones" en el canal. Solo reacciona a una
+fracción de los mensajes (REACT_CHANCE, por defecto ~1 de cada 10).
 """
 
 import logging
@@ -32,6 +33,10 @@ class AutoReact(commands.Cog):
         if not isinstance(message.author, discord.Member):
             return
         if not any(r.id == config.REACT_ROLE_ID for r in message.author.roles):
+            return
+
+        # Solo reacciona a una fracción de los mensajes (REACT_CHANCE)
+        if _rng.random() > config.REACT_CHANCE:
             return
 
         # Comprobar permiso de reaccionar en este canal antes de intentarlo
