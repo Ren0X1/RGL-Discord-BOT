@@ -5,8 +5,8 @@ Módulo 16 — Encuestas con tiempo límite.
 
 - Mínimo 2 opciones, máximo 10.
 - Se vota con BOTONES (un voto por persona; se puede cambiar mientras esté abierta).
-- Cuando se acaba el tiempo, el bot publica los resultados en el mismo canal y
-  desactiva los botones.
+- Cuando se acaba el tiempo, el bot borra el mensaje de la encuesta y publica
+  los resultados en el mismo canal.
 
 Las encuestas se guardan en SQLite (data/polls.db) y los botones son persistentes
 (DynamicItem), así que sobreviven a reinicios de la Pi: si el bot se reinicia con
@@ -205,10 +205,10 @@ class Polls(commands.Cog):
             except discord.HTTPException:
                 ch = None
         if ch is not None:
-            # quitar los botones del mensaje original
+            # borrar el mensaje original de la encuesta (lo envió el bot, puede borrarlo)
             try:
                 original = await ch.fetch_message(message_id)
-                await original.edit(view=None)
+                await original.delete()
             except discord.HTTPException:
                 pass
             try:
