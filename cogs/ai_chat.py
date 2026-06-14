@@ -38,6 +38,25 @@ _RAIZ = os.path.dirname(os.path.dirname(__file__))
 CONTEXT_PATH = os.path.join(_RAIZ, "ai_context.json")
 SAVED_PATH = os.path.join(_RAIZ, "ai_saved.json")
 MAX_DATOS = 25
+LIMITE_DISCORD = 1990   # margen bajo el límite real de 2000
+
+
+def _trocear(texto, limite=LIMITE_DISCORD):
+    """Parte un texto en trozos de <= limite caracteres, cortando por saltos de
+    línea o espacios cuando se puede, para no partir palabras."""
+    trozos = []
+    texto = texto.strip()
+    while len(texto) > limite:
+        corte = texto.rfind("\n", 0, limite)
+        if corte < int(limite * 0.6):
+            corte = texto.rfind(" ", 0, limite)
+        if corte < int(limite * 0.6):
+            corte = limite
+        trozos.append(texto[:corte].strip())
+        texto = texto[corte:].strip()
+    if texto:
+        trozos.append(texto)
+    return trozos
 
 
 class AIChat(commands.Cog):
@@ -110,15 +129,20 @@ class AIChat(commands.Cog):
     def _saved_server_obj(self, d, gid):
         s = self._find_server(d, gid)
         if s is None:
-            s = {"id": gid, "datos": [], "usuarios": []}
+            s = {"id": gid, "datos": [], "estilo": [], "usuarios": []}
             d["servidores"].append(s)
         s.setdefault("datos", [])
+        s.setdefault("estilo", [])
         s.setdefault("usuarios", [])
         return s
 
     def _saved_server_datos(self, gid):
         s = self._find_server(self._load(SAVED_PATH), gid)
         return s.get("datos", []) if s else []
+
+    def _saved_server_estilo(self, gid):
+        s = self._find_server(self._load(SAVED_PATH), gid)
+        return s.get("estilo", []) if s else []
 
     def _saved_user_datos(self, gid, uid):
         s = self._find_server(self._load(SAVED_PATH), gid)
@@ -127,23 +151,23 @@ class AIChat(commands.Cog):
                 return u.get("datos", [])
         return []
 
-    def _saved_add(self, gid, uid, dato):
+    def _saved_add(self, gid, uid, dato, clave="datos"):
         dato = (dato or "").strip()
         if not dato:
             return
         d = self._load(SAVED_PATH)
         s = self._saved_server_obj(d, gid)
         if uid == 0:
-            datos = s["datos"]
+            lista = s.setdefault(clave, [])
         else:
             u = next((x for x in s["usuarios"] if x.get("id") == uid), None)
             if u is None:
                 u = {"id": uid, "datos": []}
                 s["usuarios"].append(u)
-            datos = u.setdefault("datos", [])
-        if not any(dato.lower() == x.lower() for x in datos):
-            datos.append(dato)
-            del datos[:-MAX_DATOS]
+            lista = u.setdefault(clave, [])
+        if not any(dato.lower() == x.lower() for x in lista):
+            lista.append(dato)
+            del lista[:-MAX_DATOS]
             self._save(SAVED_PATH, d)
 
     # ---------- escucha ----------
@@ -167,7 +191,14 @@ class AIChat(commands.Cog):
             async with message.channel.typing():
                 respuesta = await self._generar(message.guild.id, historial, participantes)
             if respuesta:
-                await message.reply(respuesta[:1900], mention_author=False)
+                trozos = _trocear(respuesta)
+                primero = True
+                for tr in trozos:
+                    if primero:
+                        await message.reply(tr, mention_author=False)
+                        primero = False
+                    else:
+                        await message.channel.send(tr)
         except Exception as exc:
             log.warning("Fallo al responder con IA: %s", exc)
             return
@@ -199,6 +230,11 @@ class AIChat(commands.Cog):
         serv += self._saved_server_datos(gid)
         if serv:
             partes.append("Contexto del servidor (vale para todos): " + " · ".join(serv))
+        estilo = self._saved_server_estilo(gid)
+        if estilo:
+            partes.append(
+                "Forma de hablar del grupo (imítala, escribe con su misma jerga y expresiones): "
+                + " · ".join(estilo))
         lineas, vistos = [], set()
         for uid, nombre in participantes:
             if uid in vistos:
@@ -264,9 +300,11 @@ class AIChat(commands.Cog):
         sys = (
             "Eres un extractor de memoria. A partir de la conversación, identifica datos NUEVOS y "
             "relevantes que merezca la pena recordar sobre el servidor o sobre personas concretas "
-            "(gustos, manías, relaciones, cosas que pasan). Responde SOLO con JSON válido, sin nada "
-            "más, con esta forma exacta: "
-            '{"servidor": ["dato", ...], "usuarios": [{"nombre": "X", "dato": "..."}]}. '
+            "(gustos, manías, relaciones, cosas que pasan), y también EXPRESIONES o muletillas "
+            "típicas de cómo habla el grupo (jerga, palabras que repiten, su tono). Responde SOLO "
+            "con JSON válido, sin nada más, con esta forma exacta: "
+            '{"servidor": ["dato", ...], "expresiones": ["expresión", ...], '
+            '"usuarios": [{"nombre": "X", "dato": "..."}]}. '
             f"Los nombres válidos de usuario son: {nombres}. Si no hay nada que valga la pena, "
             "devuelve las listas vacías. No incluyas datos triviales, obvios ni inventados."
         )
@@ -286,6 +324,9 @@ class AIChat(commands.Cog):
         for dato in (obj.get("servidor") or []):
             if isinstance(dato, str):
                 self._saved_add(gid, 0, dato)
+        for expr in (obj.get("expresiones") or []):
+            if isinstance(expr, str):
+                self._saved_add(gid, 0, expr, clave="estilo")
         por_nombre = {n.lower(): i for i, n in participantes}
         for item in (obj.get("usuarios") or []):
             if not isinstance(item, dict):
