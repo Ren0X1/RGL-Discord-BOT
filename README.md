@@ -42,6 +42,7 @@ Cada función vive en su propio *cog* dentro de `cogs/`:
 - **Auto-sync de plantilla** (`template_sync`) — mantiene al día la plantilla del servidor: si detecta cambios, la sincroniza sola y lo anuncia en el canal de logs.
 - **Encuestas** (`polls`) — `/encuesta` con 2–10 opciones y **tiempo límite**. Se vota con botones (un voto por persona, cambiable); al terminar borra el mensaje y publica los resultados con barras y porcentajes. Persisten en SQLite (sobreviven a reinicios).
 - **Tickets** (`tickets`) — sistema estilo *Ticket Tool*: panel con botón para abrir, canal privado por ticket dentro de una categoría (solo lo ven el autor y los roles de staff), y cierre con confirmación (solo staff). Botones persistentes.
+- **Charla con IA** (`ai_chat`) — en un canal configurable, el bot analiza ~1 de cada 4 mensajes (configurable) y responde con IA siguiendo el hilo de la conversación (se le pasan los últimos mensajes del canal) y vacilando como un miembro más. Usa una API **gratuita** compatible con OpenAI (por defecto **Groq**, sin tarjeta). El prompt combina tres capas: personalidad base, **contexto del servidor** (para todos) y **contexto por usuario** (para personalizar las bromas), gestionados con `/ia_contexto`, `/ia_contexto_server` y `/ia_contextos`. Además **aprende sola**: guarda datos relevantes que van saliendo en la conversación (en `ai_saved.json`) y los usa junto al contexto.
 
 ### Comandos slash
 
@@ -59,6 +60,9 @@ Cada función vive en su propio *cog* dentro de `cogs/`:
 | `/equipos` | Anuncia dos equipos al azar (no mueve) |
 | `/encuesta` | Crea una encuesta con tiempo límite |
 | `/ticket_panel` | Publica el panel para abrir tickets |
+| `/ia_contexto` | Define el contexto personal de un usuario para la IA (staff) |
+| `/ia_contexto_server` | Define el contexto del servidor para la IA (staff) |
+| `/ia_contextos` | Lista los contextos de IA configurados (staff) |
 
 ---
 
@@ -91,6 +95,7 @@ Toda la configuración va en un archivo `.env` (ver `.env.example` para la lista
 - **Canales-contador**: `STATS_MEMBERS_CHANNEL_ID`, `STATS_VOICE_CHANNEL_ID`, nombres, `STATS_UPDATE_SECONDS`
 - **Plantilla**: `TEMPLATE_AUTO_SYNC`, `TEMPLATE_SYNC_MINUTES`
 - **Tickets**: `TICKET_PANEL_CHANNEL_ID`, `TICKET_CATEGORY_ID`, `TICKET_STAFF_ROLE_IDS`, textos
+- **Charla con IA**: `AI_CHANNEL_ID`, `AI_CHANCE`, `AI_API_BASE`, `AI_API_KEY`, `AI_MODEL`, `AI_SYSTEM_PROMPT`
 - **Panel**: `PANEL_PASSWORD`, `PANEL_PORT`, `PANEL_SECRET_KEY`, `PANEL_SSL_CERT`, `PANEL_SSL_KEY`
 
 ---
@@ -103,13 +108,15 @@ discord-bot/
 ├── config.py             # lee toda la configuración del .env
 ├── requirements.txt
 ├── .env.example          # plantilla de configuración
+├── ai_context.json       # contexto manual de la IA por servidor/usuario (local, no en git)
+├── ai_saved.json         # memoria que la IA guarda sola (local, no en git)
 ├── startup.sh            # arranque: actualiza, sincroniza con GitHub y reinicia
 ├── update.sh             # actualización manual completa
 ├── cogs/                 # cada funcionalidad en su módulo
 │   ├── logs.py  tempvoice.py  reminders.py  streams.py  events.py
 │   ├── moderation.py  stats.py  welcome.py  scrim.py  autoreact.py
 │   ├── owner_notify.py  serverinfo.py  serverstats.py  template_sync.py
-│   └── polls.py  tickets.py
+│   └── polls.py  tickets.py  ai_chat.py
 ├── panel/                # panel web
 │   ├── app.py            # servidor Flask
 │   ├── templates/        # login, dashboard, config (tema hacker)

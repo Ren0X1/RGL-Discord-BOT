@@ -122,9 +122,51 @@ TICKET_OPEN_MESSAGE = os.getenv(
     "Gracias por abrir un ticket. Explica tu consulta y el staff te atenderá lo antes posible.",
 )
 
+# --- 13) Chat con IA (canal vacilón) ---
+AI_CHANNEL_ID = _int("AI_CHANNEL_ID")                 # canal donde el bot vacila con IA
+AI_API_KEY = os.getenv("AI_API_KEY", "")              # clave de la API de Anthropic
+AI_MODEL = os.getenv("AI_MODEL", "claude-haiku-4-5-20251001")
+AI_CHANCE = min(1.0, max(0.0, _float("AI_CHANCE", 0.25)))   # fracción de mensajes a los que responde
+AI_MAX_TOKENS = _int("AI_MAX_TOKENS", 160)
+AI_SYSTEM_PROMPT = os.getenv(
+    "AI_SYSTEM_PROMPT",
+    "Eres un colega más del Discord: un tío español gracioso y vacilón. Respondes a los "
+    "mensajes del chat metiéndote con la gente en plan coña, con humor, jerga de internet y "
+    "desparpajo, como un amigo que pica pero con buen rollo. Normas: respuestas MUY cortas "
+    "(1-2 frases), en minúsculas y tono informal. Vacila y pica, pero NUNCA insultos graves, "
+    "nada de racismo, sexismo ni ataques personales serios; es broma entre colegas. No digas "
+    "que eres una IA ni rompas el personaje.",
+)
+
 # --- General ---
 TIMEZONE = os.getenv("TIMEZONE", "Europe/Madrid")
 
 # --- Status del bot (bola amarilla + enlace) ---
 STATUS_TEXT = os.getenv("STATUS_TEXT", "loscolegones.com")
 STATUS_URL = os.getenv("STATUS_URL", "https://loscolegones.com")
+
+# --- 13) Charla con IA (gratis, p.ej. Groq) en un canal ---
+AI_CHANNEL_ID = _int("AI_CHANNEL_ID")
+AI_CHANCE = min(1.0, max(0.0, _float("AI_CHANCE", 0.25)))   # 0.25 = 1 de cada 4 mensajes
+AI_API_BASE = os.getenv("AI_API_BASE", "https://api.groq.com/openai/v1").rstrip("/")
+AI_API_KEY = os.getenv("AI_API_KEY", "")
+AI_MODEL = os.getenv("AI_MODEL", "llama-3.3-70b-versatile")
+AI_MAX_TOKENS = _int("AI_MAX_TOKENS", 150)
+AI_COOLDOWN = _int("AI_COOLDOWN", 6)   # segundos mínimos entre respuestas (respeta el límite de la API)
+AI_HISTORY = max(0, _int("AI_HISTORY", 20))   # nº de mensajes recientes que se pasan como contexto
+AI_MEMORY = _bool("AI_MEMORY", True)   # que la IA guarde sola datos relevantes en ai_saved.json
+_AI_PROMPT_DEFECTO = (
+    "Eres un miembro más de un servidor de Discord de colegas jóvenes y gamers; NO eres un "
+    "personaje ni un asistente: eres uno más del grupo. Hablas español de España, coloquial y "
+    "de cachondeo. Sigue el hilo de la conversación y responde EN PRIMERA PERSONA, bromeando y "
+    "vacilando con gracia, como uno más. MUY IMPORTANTE: no hagas rol ni interpretes a nadie, no "
+    "imites ni hables por otros usuarios, no narres acciones (nada de *se ríe* ni asteriscos) y "
+    "NO pongas ningún nombre delante de tu mensaje: responde solo con el texto, como un mensaje "
+    "de chat normal y corto (una o dos frases), sin abusar de los emojis. Conoces el contexto del "
+    "servidor y de la peña, pero úsalo solo cuando venga a cuento para soltar un buen zasca, sin "
+    "forzarlo. Sin insultos graves ni nada ofensivo de verdad (nada de racismo, sexismo ni ataques "
+    "personales serios): es humor de colegas. Nunca digas que eres una IA ni un bot."
+)
+AI_SYSTEM_PROMPT = os.getenv("AI_SYSTEM_PROMPT", _AI_PROMPT_DEFECTO)
+# Contexto del servidor (vale para TODOS). Predefinido aquí; editable en vivo con /ia_contexto_server.
+AI_SERVER_CONTEXT = os.getenv("AI_SERVER_CONTEXT", "")

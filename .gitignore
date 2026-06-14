@@ -53,3 +53,7 @@ htmlcov/
 # Sistema
 .DS_Store
 Thumbs.db
+
+# Contexto de la IA (datos locales, no se versiona)
+ai_context.json
+ai_saved.json

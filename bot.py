@@ -45,6 +45,7 @@ COGS = (
     "cogs.template_sync",
     "cogs.polls",
     "cogs.tickets",
+    "cogs.ai_chat",
 )
 
 
