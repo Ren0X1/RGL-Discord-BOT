@@ -68,6 +68,7 @@ class AIChat(commands.Cog):
         self.bot = bot
         self._ultima = 0.0
         self._readme = None
+        self._etiquetado = False
 
     # ---------- JSON genérico ----------
     def _load(self, path):
@@ -221,6 +222,51 @@ class AIChat(commands.Cog):
         self._save(SAVED_PATH, d)
         if etiquetas:
             self._etiquetar_contexto(gid, etiquetas)
+
+    # ---------- al arrancar: completar nombre/mote desde Discord ----------
+    @commands.Cog.listener()
+    async def on_ready(self):
+        if self._etiquetado:
+            return
+        self._etiquetado = True
+        try:
+            await self._completar_etiquetas()
+        except Exception as exc:
+            log.warning("Fallo completando nombre/mote al arrancar: %s", exc)
+
+    async def _completar_etiquetas(self):
+        for path in (CONTEXT_PATH, SAVED_PATH):
+            d = self._load(path)
+            cambiado = False
+            for s in d["servidores"]:
+                guild = self.bot.get_guild(s.get("id"))
+                if not guild:
+                    continue
+                for u in s.get("usuarios", []):
+                    uid = u.get("id")
+                    if not uid:
+                        continue
+                    falta_nombre = not (u.get("nombre") or "").strip()
+                    falta_mote = not (u.get("mote") or "").strip()
+                    if not (falta_nombre or falta_mote):
+                        continue
+                    miembro = guild.get_member(uid)
+                    if miembro is None:
+                        try:
+                            miembro = await guild.fetch_member(uid)
+                        except discord.HTTPException:
+                            miembro = None
+                    if miembro is None:
+                        continue
+                    if falta_nombre:
+                        u["nombre"] = miembro.name
+                        cambiado = True
+                    if falta_mote and miembro.nick:
+                        u["mote"] = miembro.nick
+                        cambiado = True
+            if cambiado:
+                self._save(path, d)
+                log.info("Completados nombre/mote en %s", os.path.basename(path))
 
     # ---------- escucha ----------
     @commands.Cog.listener()
