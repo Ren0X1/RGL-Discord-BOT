@@ -2,18 +2,20 @@
 Módulo 18 — Charla con IA (gratis) en un canal, con memoria autoguardada y
 autoconsolidada.
 
-- Responde en un canal (AI_CHANNEL_ID) a una fracción de mensajes (AI_CHANCE),
-  siguiendo el hilo (últimos AI_HISTORY mensajes) y hablando como uno más.
-- Sabe que cuando en el chat hablan del "BOT" se refieren a ella misma.
-- Conoce el README del proyecto para resolver dudas sobre comandos.
-- Memoria en dos JSON en la raíz (gitignored):
-    ai_context.json  -> contexto manual (/ia_contexto, /ia_contexto_server)
-    ai_saved.json    -> memoria que la IA aprende y CONSOLIDA sola
-  En ambos, cada usuario guarda id + nombre + mote (apodo detectado) + info.
-- Tras responder, hace una pasada de aprendizaje que ADEMÁS optimiza el fichero:
-  fusiona duplicados, elimina lo trivial/obsoleto y compacta.
+- Responde en AI_CHANNEL_ID a una fracción de mensajes (AI_CHANCE), siguiendo el
+  hilo (últimos AI_HISTORY mensajes) y hablando como uno más del grupo.
+- Si le MENCIONAN o RESPONDEN a un mensaje suyo, contesta SIEMPRE (sin chance).
+- Respuestas largas o con varias frases -> se mandan como VARIOS mensajes de
+  Discord (no como un \\n dentro de uno).
+- Sabe que cuando hablan del "BOT" se refieren a ella. Conoce el README, pero solo
+  lo usa cuando alguien pregunta por un comando o por cómo funciona el bot.
+- Memoria en dos JSON (gitignored): ai_context.json (manual) y ai_saved.json (que
+  la IA aprende y CONSOLIDA sola: fusiona duplicados, quita lo viejo, compacta).
+  En ambos cada usuario guarda id + nombre + mote.
+- Resumen diario opcional (AI_SUMMARY_CHANNEL_ID / AI_SUMMARY_HOUR).
+- Interruptor en vivo desde el panel mediante ai_state.json ({"enabled": bool}).
 
-API compatible con OpenAI. Por defecto Groq (GRATIS, sin tarjeta): clave en
+API compatible con OpenAI. Por defecto Groq (GRATIS): clave en
 https://console.groq.com -> AI_API_KEY.
 """
 
@@ -23,33 +25,46 @@ import json
 import time
 import random
 import logging
+from datetime import time as dtime, datetime, timedelta, timezone
 
 import aiohttp
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 
 import config
 
 log = logging.getLogger("ai_chat")
 _rng = random.SystemRandom()
 
+try:
+    from zoneinfo import ZoneInfo
+    _TZ = ZoneInfo(getattr(config, "TIMEZONE", "Europe/Madrid"))
+except Exception:
+    _TZ = timezone.utc
+
 _RAIZ = os.path.dirname(os.path.dirname(__file__))
 CONTEXT_PATH = os.path.join(_RAIZ, "ai_context.json")
 SAVED_PATH = os.path.join(_RAIZ, "ai_saved.json")
 README_PATH = os.path.join(_RAIZ, "README.md")
-MAX_DATOS = 15
+STATE_PATH = os.path.join(_RAIZ, "ai_state.json")
+MAX_DATOS = 12
 README_MAX = 6000
 LIMITE_DISCORD = 1990
 
+_CLAVES_BOT = (
+    "comando", "comandos", "cómo funciona", "como funciona", "qué haces", "que haces",
+    "para qué sirve", "para que sirve", "qué eres", "que eres", "cómo te", "como te",
+    "qué puedes", "que puedes", "función", "funcion", "ayuda", "help",
+)
+
 
 def _trocear(texto, limite=LIMITE_DISCORD):
+    """Parte un texto largo en trozos <= limite respetando espacios."""
     trozos = []
     texto = texto.strip()
     while len(texto) > limite:
-        corte = texto.rfind("\n", 0, limite)
-        if corte < int(limite * 0.6):
-            corte = texto.rfind(" ", 0, limite)
+        corte = texto.rfind(" ", 0, limite)
         if corte < int(limite * 0.6):
             corte = limite
         trozos.append(texto[:corte].strip())
@@ -57,6 +72,16 @@ def _trocear(texto, limite=LIMITE_DISCORD):
     if texto:
         trozos.append(texto)
     return trozos
+
+
+def _dividir(texto):
+    """Cada línea no vacía es un mensaje aparte de Discord; trocea las muy largas."""
+    salida = []
+    for linea in (texto or "").split("\n"):
+        linea = linea.strip()
+        if linea:
+            salida.extend(_trocear(linea))
+    return salida[:5]   # tope de seguridad: máximo 5 mensajes seguidos
 
 
 def _lista_limpia(x):
@@ -69,6 +94,11 @@ class AIChat(commands.Cog):
         self._ultima = 0.0
         self._readme = None
         self._etiquetado = False
+        if config.AI_SUMMARY_CHANNEL_ID and config.AI_API_KEY:
+            self.resumen_diario.start()
+
+    def cog_unload(self):
+        self.resumen_diario.cancel()
 
     # ---------- JSON genérico ----------
     def _load(self, path):
@@ -99,6 +129,13 @@ class AIChat(commands.Cog):
             except OSError:
                 self._readme = ""
         return self._readme
+
+    def _activo(self):
+        try:
+            with open(STATE_PATH, encoding="utf-8") as f:
+                return bool(json.load(f).get("enabled", True))
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            return True
 
     # ---------- contexto manual ----------
     def _ctx_server_obj(self, d, gid):
@@ -142,7 +179,6 @@ class AIChat(commands.Cog):
         self._save(CONTEXT_PATH, d)
 
     def _etiquetar_contexto(self, gid, etiquetas):
-        """Actualiza nombre/mote en ai_context para los usuarios que ya tengan ficha."""
         d = self._load(CONTEXT_PATH)
         s = self._find_server(d, gid)
         if not s:
@@ -189,8 +225,6 @@ class AIChat(commands.Cog):
         return None
 
     def _aplicar_consolidado(self, gid, participantes, obj):
-        """Sobrescribe (consolida) la memoria del servidor y de los participantes
-        presentes con la versión optimizada que devuelve la IA."""
         d = self._load(SAVED_PATH)
         s = self._saved_server_obj(d, gid)
         serv = obj.get("servidor") or {}
@@ -200,7 +234,7 @@ class AIChat(commands.Cog):
             if "estilo" in serv:
                 s["estilo"] = _lista_limpia(serv.get("estilo"))
         por_nombre = {n.lower(): i for i, n in participantes}
-        nombre_de = dict(participantes and [(i, n) for i, n in participantes])
+        nombre_de = {i: n for i, n in participantes}
         etiquetas = {}
         for item in (obj.get("usuarios") or []):
             if not isinstance(item, dict):
@@ -208,16 +242,13 @@ class AIChat(commands.Cog):
             uid = por_nombre.get((item.get("nombre") or "").strip().lower())
             if not uid:
                 continue
-            datos = _lista_limpia(item.get("datos"))
-            mote = (item.get("mote") or "").strip()
-            nombre = nombre_de.get(uid, "")
             u = next((x for x in s["usuarios"] if x.get("id") == uid), None)
             if u is None:
                 u = {"id": uid}
                 s["usuarios"].append(u)
-            u["nombre"] = nombre or u.get("nombre", "")
-            u["mote"] = mote or u.get("mote", "")
-            u["datos"] = datos
+            u["nombre"] = nombre_de.get(uid, u.get("nombre", ""))
+            u["mote"] = (item.get("mote") or "").strip() or u.get("mote", "")
+            u["datos"] = _lista_limpia(item.get("datos"))
             etiquetas[uid] = (u["nombre"], u["mote"])
         self._save(SAVED_PATH, d)
         if etiquetas:
@@ -232,7 +263,7 @@ class AIChat(commands.Cog):
         try:
             await self._completar_etiquetas()
         except Exception as exc:
-            log.warning("Fallo completando nombre/mote al arrancar: %s", exc)
+            log.warning("Fallo completando nombre/mote: %s", exc)
 
     async def _completar_etiquetas(self):
         for path in (CONTEXT_PATH, SAVED_PATH):
@@ -269,6 +300,26 @@ class AIChat(commands.Cog):
                 log.info("Completados nombre/mote en %s", os.path.basename(path))
 
     # ---------- escucha ----------
+    def _es_directo(self, message):
+        if not self.bot.user:
+            return False
+        if self.bot.user in message.mentions:
+            return True
+        ref = getattr(message, "reference", None)
+        res = getattr(ref, "resolved", None) if ref else None
+        if isinstance(res, discord.Message) and res.author.id == self.bot.user.id:
+            return True
+        return False
+
+    def _pregunta_del_bot(self, texto):
+        t = (texto or "").lower()
+        if re.search(r"/[a-záéíóúñ_]{2,}", t):
+            return True
+        menciona = "bot" in t or " ia " in f" {t} "
+        if "?" in t and (menciona or any(k in t for k in _CLAVES_BOT)):
+            return True
+        return menciona and any(k in t for k in _CLAVES_BOT)
+
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         if message.author.bot or message.guild is None:
@@ -277,20 +328,26 @@ class AIChat(commands.Cog):
             return
         if not config.AI_API_KEY or not (message.content or "").strip():
             return
-        if _rng.random() > config.AI_CHANCE:
+        if not self._activo():
             return
-        ahora = time.monotonic()
-        if ahora - self._ultima < config.AI_COOLDOWN:
-            return
-        self._ultima = ahora
 
+        directo = self._es_directo(message)
+        if not directo:
+            if _rng.random() > config.AI_CHANCE:
+                return
+            ahora = time.monotonic()
+            if ahora - self._ultima < config.AI_COOLDOWN:
+                return
+        self._ultima = time.monotonic()
+
+        incluir_readme = self._pregunta_del_bot(message.content)
         try:
             historial, participantes = await self._recopilar(message)
             async with message.channel.typing():
-                respuesta = await self._generar(message.guild.id, historial, participantes)
+                respuesta = await self._generar(message.guild.id, historial, participantes, incluir_readme)
             if respuesta:
                 primero = True
-                for tr in _trocear(respuesta):
+                for tr in _dividir(respuesta):
                     if primero:
                         await message.reply(tr, mention_author=False)
                         primero = False
@@ -322,18 +379,15 @@ class AIChat(commands.Cog):
             participantes = [(message.author.id, message.author.display_name)]
         return historial, participantes
 
-    def _construir_system(self, gid, participantes):
+    def _construir_system(self, gid, participantes, incluir_readme=False):
         partes = [config.AI_SYSTEM_PROMPT]
         partes.append(
-            "Si en el chat alguien habla del 'BOT', 'el bot' o la IA del servidor, se refieren a "
-            "TI. Habla en primera persona como si hablaran de ti.")
-        readme = self._readme_txt()
-        if readme:
+            "Si en el chat alguien habla del 'BOT', 'el bot' o la IA del servidor, se refieren a TI: "
+            "respóndeles en primera persona, no en tercera.")
+        if incluir_readme and self._readme_txt():
             partes.append(
-                "Por si alguien pregunta por un comando o cómo funciona algo del bot, aquí tienes "
-                "su documentación (úsala SOLO si preguntan; explícalo con tu estilo, no la copies):\n"
-                + readme[:README_MAX])
-        # servidor
+                "Parece que preguntan por un comando o por cómo funciona el bot. Aquí tienes su "
+                "documentación; explícalo con tu estilo y en corto, sin copiarla:\n" + self._readme_txt()[:README_MAX])
         serv = []
         sc = self._ctx_servidor(gid)
         if sc:
@@ -343,8 +397,7 @@ class AIChat(commands.Cog):
             partes.append("Contexto del servidor (vale para todos): " + " · ".join(serv))
         estilo = self._saved_server_estilo(gid)
         if estilo:
-            partes.append("Forma de hablar del grupo (imítala, misma jerga y expresiones): " + " · ".join(estilo))
-        # gente presente
+            partes.append("Expresiones/jerga del grupo (úsalas para sonar como ellos): " + " · ".join(estilo))
         lineas = []
         for uid, nombre in participantes:
             cu = self._ctx_find_user(gid, uid)
@@ -362,13 +415,13 @@ class AIChat(commands.Cog):
                 lineas.append(f"- {etiqueta}")
         if lineas:
             partes.append(
-                "Lo que sabes de la gente que está en la conversación (úsalo solo cuando venga a "
-                "cuento, sin forzarlo):\n" + "\n".join(lineas))
+                "Lo que sabes de la gente presente (úsalo solo cuando venga a cuento para un buen "
+                "zasca, sin forzarlo):\n" + "\n".join(lineas))
         return "\n\n".join(partes)
 
     # ---------- responder ----------
-    async def _generar(self, gid, historial, participantes):
-        mensajes = [{"role": "system", "content": self._construir_system(gid, participantes)}]
+    async def _generar(self, gid, historial, participantes, incluir_readme=False):
+        mensajes = [{"role": "system", "content": self._construir_system(gid, participantes, incluir_readme)}]
         for m in historial:
             contenido = (m.content or "").strip()
             if not contenido:
@@ -410,10 +463,7 @@ class AIChat(commands.Cog):
             return
 
         memoria = {
-            "servidor": {
-                "datos": self._saved_server_datos(gid),
-                "estilo": self._saved_server_estilo(gid),
-            },
+            "servidor": {"datos": self._saved_server_datos(gid), "estilo": self._saved_server_estilo(gid)},
             "usuarios": [],
         }
         for uid, nombre in participantes:
@@ -426,15 +476,15 @@ class AIChat(commands.Cog):
 
         nombres = ", ".join(n for _, n in participantes)
         sys = (
-            "Eres el sistema de memoria de un bot de Discord. Te paso la MEMORIA ACTUAL (JSON) y "
-            "una CONVERSACIÓN reciente. Devuelve la memoria ACTUALIZADA y OPTIMIZADA en JSON, con "
-            "la MISMA estructura. Reglas: añade datos nuevos y relevantes que aparezcan; FUSIONA "
-            "duplicados y frases parecidas en una sola; elimina lo trivial, obsoleto o contradictorio; "
-            "redacta frases cortas, claras y útiles. Detecta MOTES o apodos con los que se llaman "
-            "(campo 'mote'). En 'estilo' guarda expresiones/jerga típicas del grupo. Máximo ~12 datos "
-            "por persona y ~12 del servidor. Devuelve SOLO JSON válido, sin texto extra, con la forma: "
+            "Eres el sistema de memoria de un bot de Discord. Te paso la MEMORIA ACTUAL (JSON) y una "
+            "CONVERSACIÓN reciente. Devuelve la memoria ACTUALIZADA y MUY OPTIMIZADA, con la misma "
+            "estructura. REGLAS: añade datos nuevos relevantes; FUSIONA de forma agresiva los duplicados "
+            "y las frases parecidas dejando UNA sola, la más completa y corta; NO acumules variantes de "
+            "lo mismo; elimina lo trivial, lo obsoleto y lo contradictorio. Frases cortas y claras. "
+            "Detecta MOTES/apodos (campo 'mote'). En 'estilo' guarda expresiones o jerga típicas del grupo. "
+            "MÁXIMO 8 datos por persona y 8 del servidor. Devuelve SOLO JSON válido, con la forma: "
             '{"servidor": {"datos": [], "estilo": []}, "usuarios": [{"nombre": "X", "mote": "", "datos": []}]}. '
-            f"Usa exactamente estos nombres de usuario: {nombres}."
+            f"Usa exactamente estos nombres: {nombres}."
         )
         user = ("MEMORIA ACTUAL:\n" + json.dumps(memoria, ensure_ascii=False)
                 + "\n\nCONVERSACIÓN:\n" + "\n".join(lineas))
@@ -452,6 +502,44 @@ class AIChat(commands.Cog):
             return
         if isinstance(obj, dict):
             self._aplicar_consolidado(gid, participantes, obj)
+
+    # ---------- resumen diario (#7) ----------
+    @tasks.loop(time=dtime(hour=config.AI_SUMMARY_HOUR, tzinfo=_TZ))
+    async def resumen_diario(self):
+        cid = config.AI_SUMMARY_CHANNEL_ID
+        canal = self.bot.get_channel(cid) if cid else None
+        if canal is None or not config.AI_API_KEY:
+            return
+        desde = datetime.now(_TZ) - timedelta(days=1)
+        lineas = []
+        try:
+            async for m in canal.history(limit=400, after=desde, oldest_first=True):
+                if m.author.bot:
+                    continue
+                c = (m.content or "").strip()
+                if c:
+                    lineas.append(f"{m.author.display_name}: {c[:200]}")
+        except discord.HTTPException:
+            return
+        if len(lineas) < 5:
+            return
+        sys = (config.AI_SYSTEM_PROMPT + "\n\nAhora haz un RESUMEN gracioso y breve (4-6 frases, una por "
+               "línea) de lo que se habló ayer en el chat, en plan colega y con algún zasca a quien "
+               "proceda. No saludes ni te despidas, ve al grano.")
+        data = await self._api([{"role": "system", "content": sys},
+                                {"role": "user", "content": "\n".join(lineas[-250:])}])
+        if not data:
+            return
+        try:
+            texto = (data["choices"][0]["message"].get("content") or "").strip()
+        except (KeyError, IndexError, TypeError):
+            return
+        for tr in _dividir(texto):
+            await canal.send(tr)
+
+    @resumen_diario.before_loop
+    async def _antes_resumen(self):
+        await self.bot.wait_until_ready()
 
     # ---------- API ----------
     async def _api(self, mensajes):

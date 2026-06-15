@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="RNX Panel">
+  <meta name="theme-color" content="#000600">
+  <title>root@RnxZeroPI — ia</title>
+  <style>
+    :root { color-scheme:dark; --grn:#00ff66; --grn-dim:#0a9; --amber:#ffb000; --red:#ff4d4d; --bg:#000600; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--grn); padding:22px;
+      font-family: ui-monospace,'JetBrains Mono','Cascadia Code','Fira Code',Consolas,'Courier New',monospace;
+      text-shadow:0 0 5px rgba(0,255,102,.4); }
+    .wrap { max-width:900px; margin:0 auto; }
+    header { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;
+      border-bottom:1px dashed rgba(0,255,102,.3); padding-bottom:10px; }
+    header h1 { font-size:15px; margin:0; }
+    header h1::before { content:"// "; color:var(--grn-dim); }
+    a { color:var(--grn-dim); text-decoration:none; font-size:12px; }
+    a:hover { color:var(--grn); }
+    .sec { color:var(--amber); font-size:12px; letter-spacing:1px; margin:18px 0 8px; }
+    .sec::before { content:":: "; }
+    label { display:block; font-size:12px; color:var(--grn-dim); margin-bottom:4px; }
+    textarea { width:100%; background:#001400; border:1px solid rgba(0,255,102,.3); border-radius:3px;
+      color:var(--grn); font:inherit; font-size:12px; padding:10px; min-height:220px; resize:vertical;
+      white-space:pre; overflow-wrap:normal; }
+    textarea:focus { outline:none; border-color:var(--grn); }
+    button { font:inherit; font-weight:700; cursor:pointer; padding:10px 18px; border-radius:3px; margin-top:10px;
+      background:transparent; border:1px solid var(--grn); color:var(--grn); text-shadow:0 0 5px rgba(0,255,102,.5); }
+    button:hover { background:var(--grn); color:#000; text-shadow:none; box-shadow:0 0 14px rgba(0,255,102,.5); }
+    .flash { padding:9px 12px; font-size:12px; margin-bottom:14px; border:1px solid; }
+    .flash.ok { border-color:var(--grn); }
+    .flash.error { border-color:var(--red); color:var(--red); }
+    .estado { display:flex; align-items:center; gap:14px; border:1px dashed rgba(0,255,102,.3);
+      padding:12px 14px; border-radius:4px; margin-bottom:8px; }
+    .pill { font-weight:700; }
+    .pill.on { color:var(--grn); } .pill.off { color:var(--red); }
+    .nota { font-size:11px; color:var(--grn-dim); margin-top:4px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>ia :: contexto &amp; memoria</h1>
+      <nav><a href="/">&larr; dashboard</a> &nbsp; <a href="/config">config</a> &nbsp; <a href="/logs">logs</a></nav>
+    </header>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for cat, msg in messages %}<div class="flash {{ cat }}">{{ msg }}</div>{% endfor %}
+    {% endwith %}
+
+    <div class="sec">interruptor</div>
+    <form method="post" class="estado">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <input type="hidden" name="accion" value="estado">
+      <span>Chat de IA:
+        <span class="pill {{ 'on' if enabled else 'off' }}">{{ 'ACTIVADO' if enabled else 'DESACTIVADO' }}</span>
+      </span>
+      <label style="margin:0;"><input type="checkbox" name="enabled" {{ 'checked' if enabled else '' }}> activado</label>
+      <button type="submit">aplicar</button>
+    </form>
+    <div class="nota">Se aplica al instante, sin reiniciar el bot.</div>
+
+    <form method="post">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <input type="hidden" name="accion" value="ficheros">
+
+      <div class="sec">ai_context.json (contexto manual)</div>
+      <textarea name="contexto" spellcheck="false">{{ contexto }}</textarea>
+
+      <div class="sec">ai_saved.json (memoria que aprende la IA)</div>
+      <textarea name="saved" spellcheck="false">{{ saved }}</textarea>
+
+      <div class="nota">Debe ser JSON válido. Si te equivocas, no se guarda nada y te avisa.</div>
+      <button type="submit">guardar ficheros</button>
+    </form>
+  </div>
+</body>
+</html>

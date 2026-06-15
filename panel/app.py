@@ -33,6 +33,9 @@ from waitress import serve
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 BOT_DIR = os.path.dirname(BASE_DIR)            # /home/renox/discord-bot
 ENV_PATH = os.path.join(BOT_DIR, ".env")
+AI_CONTEXT_PATH = os.path.join(BOT_DIR, "ai_context.json")
+AI_SAVED_PATH = os.path.join(BOT_DIR, "ai_saved.json")
+AI_STATE_PATH = os.path.join(BOT_DIR, "ai_state.json")
 load_dotenv(ENV_PATH)
 
 # Claves que NO se muestran en el editor (se enmascaran)
@@ -332,6 +335,57 @@ def config_editor():
             })
             seccion = None
     return render_template("config.html", campos=campos)
+
+
+def _leer_json_txt(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+    except OSError:
+        return '{\n  "servidores": []\n}'
+
+
+def _ia_enabled():
+    try:
+        with open(AI_STATE_PATH, encoding="utf-8") as f:
+            return bool(json.load(f).get("enabled", True))
+    except (OSError, ValueError):
+        return True
+
+
+@app.route("/ia", methods=["GET", "POST"])
+@login_required
+def ia_editor():
+    if request.method == "POST":
+        if request.form.get("csrf") != session.get("csrf"):
+            flash("Token de seguridad inválido. Recarga la página.", "error")
+            return redirect(url_for("ia_editor"))
+        accion = request.form.get("accion")
+        try:
+            if accion == "estado":
+                enabled = request.form.get("enabled") == "on"
+                with open(AI_STATE_PATH, "w", encoding="utf-8") as f:
+                    json.dump({"enabled": enabled}, f)
+                flash("Chat de IA " + ("ACTIVADO." if enabled else "DESACTIVADO."), "ok")
+            else:
+                ctx = request.form.get("contexto", "")
+                sav = request.form.get("saved", "")
+                json.loads(ctx)   # valida
+                json.loads(sav)
+                with open(AI_CONTEXT_PATH, "w", encoding="utf-8") as f:
+                    f.write(ctx)
+                with open(AI_SAVED_PATH, "w", encoding="utf-8") as f:
+                    f.write(sav)
+                flash("Ficheros de IA guardados. Los cambios se aplican al instante.", "ok")
+        except ValueError as e:
+            flash(f"JSON inválido, no se guardó nada: {e}", "error")
+        except Exception as e:
+            flash(f"Error guardando: {e}", "error")
+        return redirect(url_for("ia_editor"))
+    return render_template("ia.html",
+                           contexto=_leer_json_txt(AI_CONTEXT_PATH),
+                           saved=_leer_json_txt(AI_SAVED_PATH),
+                           enabled=_ia_enabled())
 
 
 @app.route("/action/<name>", methods=["POST"])
