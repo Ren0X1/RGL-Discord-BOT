@@ -1,17 +1,17 @@
 """
-Módulo 18 — Charla con IA (gratis) en un canal, con memoria autoguardada.
+Módulo 18 — Charla con IA (gratis) en un canal, con memoria autoguardada y
+autoconsolidada.
 
-En el canal AI_CHANNEL_ID, el bot analiza una fracción de los mensajes (AI_CHANCE)
-y responde con IA siguiendo el hilo (últimos AI_HISTORY mensajes), vacilando como
-un miembro más.
-
-El "system prompt" combina: personalidad base (AI_SYSTEM_PROMPT) + contexto manual
-(ai_context.json, con /ia_contexto y /ia_contexto_server) + memoria que la propia IA
-va guardando (ai_saved.json).
-
-Flujo robusto: PRIMERO responde (llamada normal) y DESPUÉS, en segundo plano, hace
-una pasada de "aprendizaje" que extrae datos nuevos y los guarda. Si el aprendizaje
-falla, la respuesta no se ve afectada.
+- Responde en un canal (AI_CHANNEL_ID) a una fracción de mensajes (AI_CHANCE),
+  siguiendo el hilo (últimos AI_HISTORY mensajes) y hablando como uno más.
+- Sabe que cuando en el chat hablan del "BOT" se refieren a ella misma.
+- Conoce el README del proyecto para resolver dudas sobre comandos.
+- Memoria en dos JSON en la raíz (gitignored):
+    ai_context.json  -> contexto manual (/ia_contexto, /ia_contexto_server)
+    ai_saved.json    -> memoria que la IA aprende y CONSOLIDA sola
+  En ambos, cada usuario guarda id + nombre + mote (apodo detectado) + info.
+- Tras responder, hace una pasada de aprendizaje que ADEMÁS optimiza el fichero:
+  fusiona duplicados, elimina lo trivial/obsoleto y compacta.
 
 API compatible con OpenAI. Por defecto Groq (GRATIS, sin tarjeta): clave en
 https://console.groq.com -> AI_API_KEY.
@@ -37,13 +37,13 @@ _rng = random.SystemRandom()
 _RAIZ = os.path.dirname(os.path.dirname(__file__))
 CONTEXT_PATH = os.path.join(_RAIZ, "ai_context.json")
 SAVED_PATH = os.path.join(_RAIZ, "ai_saved.json")
-MAX_DATOS = 25
-LIMITE_DISCORD = 1990   # margen bajo el límite real de 2000
+README_PATH = os.path.join(_RAIZ, "README.md")
+MAX_DATOS = 15
+README_MAX = 6000
+LIMITE_DISCORD = 1990
 
 
 def _trocear(texto, limite=LIMITE_DISCORD):
-    """Parte un texto en trozos de <= limite caracteres, cortando por saltos de
-    línea o espacios cuando se puede, para no partir palabras."""
     trozos = []
     texto = texto.strip()
     while len(texto) > limite:
@@ -59,10 +59,15 @@ def _trocear(texto, limite=LIMITE_DISCORD):
     return trozos
 
 
+def _lista_limpia(x):
+    return [s.strip() for s in x if isinstance(s, str) and s.strip()][:MAX_DATOS] if isinstance(x, list) else []
+
+
 class AIChat(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self._ultima = 0.0
+        self._readme = None
 
     # ---------- JSON genérico ----------
     def _load(self, path):
@@ -85,6 +90,15 @@ class AIChat(commands.Cog):
                 return s
         return None
 
+    def _readme_txt(self):
+        if self._readme is None:
+            try:
+                with open(README_PATH, encoding="utf-8") as f:
+                    self._readme = f.read()
+            except OSError:
+                self._readme = ""
+        return self._readme
+
     # ---------- contexto manual ----------
     def _ctx_server_obj(self, d, gid):
         s = self._find_server(d, gid)
@@ -100,11 +114,11 @@ class AIChat(commands.Cog):
             return s["contexto"]
         return config.AI_SERVER_CONTEXT
 
-    def _ctx_usuario(self, gid, uid):
+    def _ctx_find_user(self, gid, uid):
         s = self._find_server(self._load(CONTEXT_PATH), gid)
         for u in (s.get("usuarios", []) if s else []):
             if u.get("id") == uid:
-                return u.get("contexto")
+                return u
         return None
 
     def _set_servidor(self, gid, texto):
@@ -112,18 +126,40 @@ class AIChat(commands.Cog):
         self._ctx_server_obj(d, gid)["contexto"] = texto or ""
         self._save(CONTEXT_PATH, d)
 
-    def _set_usuario(self, gid, uid, texto):
+    def _set_usuario(self, gid, uid, nombre, texto):
         d = self._load(CONTEXT_PATH)
         usuarios = self._ctx_server_obj(d, gid)["usuarios"]
-        existente = next((u for u in usuarios if u.get("id") == uid), None)
+        u = next((x for x in usuarios if x.get("id") == uid), None)
         if texto:
-            if existente:
-                existente["contexto"] = texto
-            else:
-                usuarios.append({"id": uid, "contexto": texto})
-        elif existente:
-            usuarios.remove(existente)
+            if u is None:
+                u = {"id": uid, "nombre": nombre, "mote": "", "contexto": ""}
+                usuarios.append(u)
+            u["nombre"] = nombre or u.get("nombre", "")
+            u["contexto"] = texto
+        elif u is not None:
+            usuarios.remove(u)
         self._save(CONTEXT_PATH, d)
+
+    def _etiquetar_contexto(self, gid, etiquetas):
+        """Actualiza nombre/mote en ai_context para los usuarios que ya tengan ficha."""
+        d = self._load(CONTEXT_PATH)
+        s = self._find_server(d, gid)
+        if not s:
+            return
+        cambiado = False
+        for u in s.get("usuarios", []):
+            nm = etiquetas.get(u.get("id"))
+            if not nm:
+                continue
+            nombre, mote = nm
+            if nombre and u.get("nombre") != nombre:
+                u["nombre"] = nombre
+                cambiado = True
+            if mote and u.get("mote") != mote:
+                u["mote"] = mote
+                cambiado = True
+        if cambiado:
+            self._save(CONTEXT_PATH, d)
 
     # ---------- memoria autoguardada ----------
     def _saved_server_obj(self, d, gid):
@@ -144,31 +180,47 @@ class AIChat(commands.Cog):
         s = self._find_server(self._load(SAVED_PATH), gid)
         return s.get("estilo", []) if s else []
 
-    def _saved_user_datos(self, gid, uid):
+    def _saved_find_user(self, gid, uid):
         s = self._find_server(self._load(SAVED_PATH), gid)
         for u in (s.get("usuarios", []) if s else []):
             if u.get("id") == uid:
-                return u.get("datos", [])
-        return []
+                return u
+        return None
 
-    def _saved_add(self, gid, uid, dato, clave="datos"):
-        dato = (dato or "").strip()
-        if not dato:
-            return
+    def _aplicar_consolidado(self, gid, participantes, obj):
+        """Sobrescribe (consolida) la memoria del servidor y de los participantes
+        presentes con la versión optimizada que devuelve la IA."""
         d = self._load(SAVED_PATH)
         s = self._saved_server_obj(d, gid)
-        if uid == 0:
-            lista = s.setdefault(clave, [])
-        else:
+        serv = obj.get("servidor") or {}
+        if isinstance(serv, dict):
+            if "datos" in serv:
+                s["datos"] = _lista_limpia(serv.get("datos"))
+            if "estilo" in serv:
+                s["estilo"] = _lista_limpia(serv.get("estilo"))
+        por_nombre = {n.lower(): i for i, n in participantes}
+        nombre_de = dict(participantes and [(i, n) for i, n in participantes])
+        etiquetas = {}
+        for item in (obj.get("usuarios") or []):
+            if not isinstance(item, dict):
+                continue
+            uid = por_nombre.get((item.get("nombre") or "").strip().lower())
+            if not uid:
+                continue
+            datos = _lista_limpia(item.get("datos"))
+            mote = (item.get("mote") or "").strip()
+            nombre = nombre_de.get(uid, "")
             u = next((x for x in s["usuarios"] if x.get("id") == uid), None)
             if u is None:
-                u = {"id": uid, "datos": []}
+                u = {"id": uid}
                 s["usuarios"].append(u)
-            lista = u.setdefault(clave, [])
-        if not any(dato.lower() == x.lower() for x in lista):
-            lista.append(dato)
-            del lista[:-MAX_DATOS]
-            self._save(SAVED_PATH, d)
+            u["nombre"] = nombre or u.get("nombre", "")
+            u["mote"] = mote or u.get("mote", "")
+            u["datos"] = datos
+            etiquetas[uid] = (u["nombre"], u["mote"])
+        self._save(SAVED_PATH, d)
+        if etiquetas:
+            self._etiquetar_contexto(gid, etiquetas)
 
     # ---------- escucha ----------
     @commands.Cog.listener()
@@ -191,9 +243,8 @@ class AIChat(commands.Cog):
             async with message.channel.typing():
                 respuesta = await self._generar(message.guild.id, historial, participantes)
             if respuesta:
-                trozos = _trocear(respuesta)
                 primero = True
-                for tr in trozos:
+                for tr in _trocear(respuesta):
                     if primero:
                         await message.reply(tr, mention_author=False)
                         primero = False
@@ -203,26 +254,40 @@ class AIChat(commands.Cog):
             log.warning("Fallo al responder con IA: %s", exc)
             return
 
-        # Aprendizaje aparte: nunca debe romper la respuesta
         if config.AI_MEMORY:
             try:
                 await self._aprender(message.guild.id, historial, participantes)
             except Exception as exc:
-                log.warning("Fallo al aprender: %s", exc)
+                log.warning("Fallo al aprender/consolidar: %s", exc)
 
-    # ---------- recopilar conversación ----------
+    # ---------- recopilar ----------
     async def _recopilar(self, message):
         historial = []
         async for m in message.channel.history(limit=config.AI_HISTORY or 1):
             historial.append(m)
         historial.reverse()
-        participantes = [(m.author.id, m.author.display_name) for m in historial if not m.author.bot]
+        participantes, vistos = [], set()
+        for m in historial:
+            if m.author.bot or m.author.id in vistos:
+                continue
+            vistos.add(m.author.id)
+            participantes.append((m.author.id, m.author.display_name))
         if not participantes:
             participantes = [(message.author.id, message.author.display_name)]
         return historial, participantes
 
     def _construir_system(self, gid, participantes):
         partes = [config.AI_SYSTEM_PROMPT]
+        partes.append(
+            "Si en el chat alguien habla del 'BOT', 'el bot' o la IA del servidor, se refieren a "
+            "TI. Habla en primera persona como si hablaran de ti.")
+        readme = self._readme_txt()
+        if readme:
+            partes.append(
+                "Por si alguien pregunta por un comando o cómo funciona algo del bot, aquí tienes "
+                "su documentación (úsala SOLO si preguntan; explícalo con tu estilo, no la copies):\n"
+                + readme[:README_MAX])
+        # servidor
         serv = []
         sc = self._ctx_servidor(gid)
         if sc:
@@ -232,25 +297,27 @@ class AIChat(commands.Cog):
             partes.append("Contexto del servidor (vale para todos): " + " · ".join(serv))
         estilo = self._saved_server_estilo(gid)
         if estilo:
-            partes.append(
-                "Forma de hablar del grupo (imítala, escribe con su misma jerga y expresiones): "
-                + " · ".join(estilo))
-        lineas, vistos = [], set()
+            partes.append("Forma de hablar del grupo (imítala, misma jerga y expresiones): " + " · ".join(estilo))
+        # gente presente
+        lineas = []
         for uid, nombre in participantes:
-            if uid in vistos:
-                continue
-            vistos.add(uid)
+            cu = self._ctx_find_user(gid, uid)
+            su = self._saved_find_user(gid, uid)
+            mote = (su or {}).get("mote") or (cu or {}).get("mote") or ""
             info = []
-            uc = self._ctx_usuario(gid, uid)
-            if uc:
-                info.append(uc)
-            info += self._saved_user_datos(gid, uid)
+            if cu and cu.get("contexto"):
+                info.append(cu["contexto"])
+            if su:
+                info += su.get("datos", [])
+            etiqueta = nombre + (f" (alias '{mote}')" if mote else "")
             if info:
-                lineas.append(f"- {nombre}: " + " · ".join(info))
+                lineas.append(f"- {etiqueta}: " + " · ".join(info))
+            elif mote:
+                lineas.append(f"- {etiqueta}")
         if lineas:
             partes.append(
-                "Lo que sabes de la gente que está en la conversación (úsalo solo cuando "
-                "venga a cuento, sin forzarlo):\n" + "\n".join(lineas))
+                "Lo que sabes de la gente que está en la conversación (úsalo solo cuando venga a "
+                "cuento, sin forzarlo):\n" + "\n".join(lineas))
         return "\n\n".join(partes)
 
     # ---------- responder ----------
@@ -273,7 +340,6 @@ class AIChat(commands.Cog):
             return None
         if not texto:
             return None
-        # Quitar un posible "Nombre:" que el modelo haya puesto delante (no queremos que rolee)
         m = re.match(r"^\s*([^\n:]{1,32}):\s*(.+)$", texto, re.S)
         if m:
             nombre = m.group(1).strip().lower()
@@ -285,7 +351,7 @@ class AIChat(commands.Cog):
                 texto = m.group(2).strip()
         return texto or None
 
-    # ---------- aprender (pasada aparte) ----------
+    # ---------- aprender + consolidar ----------
     async def _aprender(self, gid, historial, participantes):
         lineas = []
         for m in historial:
@@ -296,20 +362,37 @@ class AIChat(commands.Cog):
             lineas.append(f"{quien}: {c[:300]}")
         if not lineas:
             return
-        nombres = ", ".join(sorted({n for _, n in participantes}))
+
+        memoria = {
+            "servidor": {
+                "datos": self._saved_server_datos(gid),
+                "estilo": self._saved_server_estilo(gid),
+            },
+            "usuarios": [],
+        }
+        for uid, nombre in participantes:
+            su = self._saved_find_user(gid, uid)
+            memoria["usuarios"].append({
+                "nombre": nombre,
+                "mote": (su or {}).get("mote", ""),
+                "datos": (su or {}).get("datos", []),
+            })
+
+        nombres = ", ".join(n for _, n in participantes)
         sys = (
-            "Eres un extractor de memoria. A partir de la conversación, identifica datos NUEVOS y "
-            "relevantes que merezca la pena recordar sobre el servidor o sobre personas concretas "
-            "(gustos, manías, relaciones, cosas que pasan), y también EXPRESIONES o muletillas "
-            "típicas de cómo habla el grupo (jerga, palabras que repiten, su tono). Responde SOLO "
-            "con JSON válido, sin nada más, con esta forma exacta: "
-            '{"servidor": ["dato", ...], "expresiones": ["expresión", ...], '
-            '"usuarios": [{"nombre": "X", "dato": "..."}]}. '
-            f"Los nombres válidos de usuario son: {nombres}. Si no hay nada que valga la pena, "
-            "devuelve las listas vacías. No incluyas datos triviales, obvios ni inventados."
+            "Eres el sistema de memoria de un bot de Discord. Te paso la MEMORIA ACTUAL (JSON) y "
+            "una CONVERSACIÓN reciente. Devuelve la memoria ACTUALIZADA y OPTIMIZADA en JSON, con "
+            "la MISMA estructura. Reglas: añade datos nuevos y relevantes que aparezcan; FUSIONA "
+            "duplicados y frases parecidas en una sola; elimina lo trivial, obsoleto o contradictorio; "
+            "redacta frases cortas, claras y útiles. Detecta MOTES o apodos con los que se llaman "
+            "(campo 'mote'). En 'estilo' guarda expresiones/jerga típicas del grupo. Máximo ~12 datos "
+            "por persona y ~12 del servidor. Devuelve SOLO JSON válido, sin texto extra, con la forma: "
+            '{"servidor": {"datos": [], "estilo": []}, "usuarios": [{"nombre": "X", "mote": "", "datos": []}]}. '
+            f"Usa exactamente estos nombres de usuario: {nombres}."
         )
-        mensajes = [{"role": "system", "content": sys}, {"role": "user", "content": "\n".join(lineas)}]
-        data = await self._api(mensajes)
+        user = ("MEMORIA ACTUAL:\n" + json.dumps(memoria, ensure_ascii=False)
+                + "\n\nCONVERSACIÓN:\n" + "\n".join(lineas))
+        data = await self._api([{"role": "system", "content": sys}, {"role": "user", "content": user}])
         if not data:
             return
         try:
@@ -321,30 +404,14 @@ class AIChat(commands.Cog):
             obj = json.loads(txt)
         except ValueError:
             return
-        for dato in (obj.get("servidor") or []):
-            if isinstance(dato, str):
-                self._saved_add(gid, 0, dato)
-        for expr in (obj.get("expresiones") or []):
-            if isinstance(expr, str):
-                self._saved_add(gid, 0, expr, clave="estilo")
-        por_nombre = {n.lower(): i for i, n in participantes}
-        for item in (obj.get("usuarios") or []):
-            if not isinstance(item, dict):
-                continue
-            uid = por_nombre.get((item.get("nombre") or "").strip().lower())
-            dato = (item.get("dato") or "").strip()
-            if uid and dato:
-                self._saved_add(gid, uid, dato)
+        if isinstance(obj, dict):
+            self._aplicar_consolidado(gid, participantes, obj)
 
-    # ---------- llamada a la API ----------
+    # ---------- API ----------
     async def _api(self, mensajes):
         headers = {"Authorization": f"Bearer {config.AI_API_KEY}", "Content-Type": "application/json"}
-        payload = {
-            "model": config.AI_MODEL,
-            "messages": mensajes,
-            "max_tokens": config.AI_MAX_TOKENS,
-            "temperature": 1.0,
-        }
+        payload = {"model": config.AI_MODEL, "messages": mensajes,
+                   "max_tokens": config.AI_MAX_TOKENS, "temperature": 1.0}
         timeout = aiohttp.ClientTimeout(total=25)
         async with aiohttp.ClientSession(timeout=timeout) as s:
             async with s.post(f"{config.AI_API_BASE}/chat/completions", json=payload, headers=headers) as r:
@@ -353,7 +420,7 @@ class AIChat(commands.Cog):
                     return None
                 return await r.json()
 
-    # ---------- comandos de contexto (solo staff) ----------
+    # ---------- comandos (solo staff) ----------
     def _es_admin(self, interaction):
         return interaction.guild is not None and interaction.user.guild_permissions.manage_guild
 
@@ -363,7 +430,7 @@ class AIChat(commands.Cog):
         if not self._es_admin(interaction):
             await interaction.response.send_message("Necesitas **Gestionar servidor**.", ephemeral=True)
             return
-        self._set_usuario(interaction.guild.id, usuario.id, (texto or "").strip())
+        self._set_usuario(interaction.guild.id, usuario.id, usuario.display_name, (texto or "").strip())
         if texto and texto.strip():
             await interaction.response.send_message(f"✅ Contexto guardado para {usuario.mention}.", ephemeral=True)
         else:
@@ -391,11 +458,14 @@ class AIChat(commands.Cog):
             lineas.append(f"**🌐 Servidor (manual)**: {s['contexto'][:120]}")
         if sv and sv.get("datos"):
             lineas.append(f"**🧠 Servidor (recordado)**: {', '.join(sv['datos'])[:200]}")
-        for u in (s.get("usuarios", []) if s else []):
-            lineas.append(f"**<@{u.get('id')}> (manual)**: {u.get('contexto','')[:120]}")
+        if sv and sv.get("estilo"):
+            lineas.append(f"**🗣️ Estilo**: {', '.join(sv['estilo'])[:150]}")
         for u in (sv.get("usuarios", []) if sv else []):
+            etiq = u.get("nombre") or u.get("id")
+            if u.get("mote"):
+                etiq += f" ('{u['mote']}')"
             if u.get("datos"):
-                lineas.append(f"**<@{u.get('id')}> (recordado)**: {', '.join(u['datos'])[:200]}")
+                lineas.append(f"**{etiq}**: {', '.join(u['datos'])[:200]}")
         msg = "\n".join(lineas) if lineas else "No hay contextos ni memoria en este servidor."
         await interaction.response.send_message(msg[:1900], ephemeral=True)
 
