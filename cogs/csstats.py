@@ -30,6 +30,31 @@ LEETIFY_BASE = "https://api-public.cs-prod.leetify.com"
 _STEAM64_RE = re.compile(r"(7656\d{13})")
 _VANITY_RE = re.compile(r"steamcommunity\.com/id/([^/?#\s]+)", re.I)
 
+# Rangos clásicos de CS (Competitivo y Wingman usan esta escala 1-18)
+_RANGOS_CS = {
+    1: "Silver I", 2: "Silver II", 3: "Silver III", 4: "Silver IV",
+    5: "Silver Elite", 6: "Silver Elite Master", 7: "Gold Nova I",
+    8: "Gold Nova II", 9: "Gold Nova III", 10: "Gold Nova Master",
+    11: "Master Guardian I", 12: "Master Guardian II", 13: "Master Guardian Elite",
+    14: "Distinguished Master Guardian", 15: "Legendary Eagle",
+    16: "Legendary Eagle Master", 17: "Supreme Master First Class",
+    18: "The Global Elite",
+}
+
+
+def _rango_cs(n):
+    if n is None:
+        return None
+    return _RANGOS_CS.get(n, f"rango {n}")
+
+
+_RESULTADO = {"win": "✅", "won": "✅", "loss": "❌", "lose": "❌", "lost": "❌",
+              "tie": "🟰", "draw": "🟰"}
+
+
+def _emoji_resultado(o):
+    return _RESULTADO.get((o or "").lower(), "❔")
+
 
 def _pct(x):
     if x is None:
@@ -124,21 +149,20 @@ class CSStats(commands.Cog):
 
         e = discord.Embed(title=f"📊 {nombre}", url=leetify_url, color=0xF84982)
 
-        # rangos
+        # rangos: cada modo en su propia línea
+        lineas_rango = []
+        if ranks.get("faceit") is not None:
+            elo = f" · {ranks['faceit_elo']} ELO" if ranks.get("faceit_elo") else ""
+            lineas_rango.append(f"**FACEIT:** Nivel {ranks['faceit']}{elo}")
+        if ranks.get("premier") is not None:
+            lineas_rango.append(f"**Premier:** {ranks['premier']} ELO")
+        if ranks.get("wingman") is not None:
+            lineas_rango.append(f"**Wingman:** {_rango_cs(ranks['wingman'])}")
         comp = ranks.get("competitive") or []
-        comp_txt = ""
         if comp:
             mejor = max(comp, key=lambda c: c.get("rank") or 0)
-            comp_txt = f" · MM {mejor.get('rank')} ({mejor.get('map_name')})"
-        rangos = []
-        if ranks.get("premier") is not None:
-            rangos.append(f"Premier **{ranks['premier']}**")
-        if ranks.get("faceit") is not None:
-            elo = f" ({ranks['faceit_elo']} elo)" if ranks.get("faceit_elo") else ""
-            rangos.append(f"FACEIT **{ranks['faceit']}**{elo}")
-        if ranks.get("wingman") is not None:
-            rangos.append(f"Wingman {ranks['wingman']}")
-        e.add_field(name="🎖️ Rangos", value=(" · ".join(rangos) + comp_txt) or "—", inline=False)
+            lineas_rango.append(f"**Competitivo:** {_rango_cs(mejor.get('rank'))} ({mejor.get('map_name')})")
+        e.add_field(name="🎖️ Rangos", value="\n".join(lineas_rango) or "Sin rangos", inline=False)
 
         # leetify rating
         e.add_field(name="⭐ Leetify rating",
@@ -175,8 +199,9 @@ class CSStats(commands.Cog):
                 sc = m.get("score") or []
                 marcador = f"{sc[0]}-{sc[1]}" if len(sc) == 2 else ""
                 lr = m.get("leetify_rating")
-                lr_txt = f" · LR {lr*100:.1f}" if isinstance(lr, (int, float)) else ""
-                lineas.append(f"`{(m.get('map_name') or '?').replace('de_',''):8}` {m.get('outcome','?'):4} {marcador}{lr_txt}")
+                lr_txt = f" · LR {lr*100:+.1f}" if isinstance(lr, (int, float)) else ""
+                mapa = (m.get("map_name") or "?").replace("de_", "")
+                lineas.append(f"{_emoji_resultado(m.get('outcome'))} `{mapa:8}` {marcador}{lr_txt}")
             e.add_field(name="🕹️ Últimas partidas", value="\n".join(lineas), inline=False)
 
         e.add_field(name="🔗 Enlaces",
