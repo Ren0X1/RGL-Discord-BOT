@@ -46,6 +46,7 @@ COGS = (
     "cogs.polls",
     "cogs.tickets",
     "cogs.ai_chat",
+    "cogs.releases",
 )
 
 

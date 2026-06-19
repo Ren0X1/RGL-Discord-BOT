@@ -60,3 +60,6 @@ ai_saved.json
 
 # Estado en vivo del chat de IA (panel)
 ai_state.json
+
+# Estado de releases ya anunciadas
+data/releases_state.json

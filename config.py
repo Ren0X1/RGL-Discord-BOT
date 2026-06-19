@@ -166,3 +166,12 @@ _AI_PROMPT_DEFECTO = (
 AI_SYSTEM_PROMPT = os.getenv("AI_SYSTEM_PROMPT", _AI_PROMPT_DEFECTO)
 # Contexto del servidor (vale para TODOS). Predefinido aquí; editable en vivo con /ia_contexto_server.
 AI_SERVER_CONTEXT = os.getenv("AI_SERVER_CONTEXT", "")
+
+# --- 19) Anuncio de nuevas releases de GitHub ---
+# Uno o varios repos "owner/repo" separados por comas. Ej: "Ren0X1/RGL-Discord-BOT, torvalds/linux"
+GITHUB_RELEASES_REPOS = [r.strip() for r in os.getenv("GITHUB_RELEASES_REPOS", "")
+                         .replace("\n", ",").replace(";", ",").split(",") if "/" in r]
+GITHUB_RELEASES_CHANNEL_ID = _int("GITHUB_RELEASES_CHANNEL_ID")   # canal donde anunciar
+GITHUB_RELEASES_INTERVAL = max(5, _int("GITHUB_RELEASES_INTERVAL", 15))   # minutos entre comprobaciones
+GITHUB_RELEASES_MENTION = os.getenv("GITHUB_RELEASES_MENTION", "@everyone")   # qué pingar (vacío = nada)
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")   # opcional: más límite en la API de GitHub
