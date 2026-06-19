@@ -175,3 +175,22 @@ GITHUB_RELEASES_CHANNEL_ID = _int("GITHUB_RELEASES_CHANNEL_ID")   # canal donde 
 GITHUB_RELEASES_INTERVAL = max(5, _int("GITHUB_RELEASES_INTERVAL", 15))   # minutos entre comprobaciones
 GITHUB_RELEASES_MENTION = os.getenv("GITHUB_RELEASES_MENTION", "@everyone")   # qué pingar (vacío = nada)
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")   # opcional: más límite en la API de GitHub
+
+# --- 20) Alertas de salud de la máquina (DM al owner) ---
+HEALTH_INTERVAL = max(1, _int("HEALTH_INTERVAL", 5))      # minutos entre comprobaciones
+HEALTH_TEMP_MAX = _float("HEALTH_TEMP_MAX", 75.0)         # °C
+HEALTH_RAM_MAX = _float("HEALTH_RAM_MAX", 90.0)           # % RAM usada
+HEALTH_DISK_MAX = _float("HEALTH_DISK_MAX", 90.0)         # % disco usado
+
+# --- 21) Automod (anti-spam y anti-invitaciones) ---
+AUTOMOD_ANTIINVITE = _bool("AUTOMOD_ANTIINVITE", True)    # borra invitaciones a otros servidores
+AUTOMOD_ANTISPAM = _bool("AUTOMOD_ANTISPAM", True)        # corta el flood de mensajes
+AUTOMOD_SPAM_COUNT = max(3, _int("AUTOMOD_SPAM_COUNT", 6))    # nº de mensajes...
+AUTOMOD_SPAM_SECONDS = max(2, _int("AUTOMOD_SPAM_SECONDS", 7))  # ...en estos segundos = spam
+AUTOMOD_TIMEOUT_SECONDS = _int("AUTOMOD_TIMEOUT_SECONDS", 300)  # aislar al spammer (0 = no aislar)
+AUTOMOD_EXEMPT_ROLES = _ids("AUTOMOD_EXEMPT_ROLES")      # roles que se libran del automod
+AUTOMOD_LOG_CHANNEL_ID = _int("AUTOMOD_LOG_CHANNEL_ID")  # vacío = usa LOG_CHANNEL_ID
+
+# --- 22) Estadísticas de Counter-Strike (Leetify + csstats.gg) ---
+LEETIFY_API_KEY = os.getenv("LEETIFY_API_KEY", "")   # opcional: más límite (leetify.com/app/developer)
+STEAM_API_KEY = os.getenv("STEAM_API_KEY", "")       # necesario solo para URLs /id/<nombre> (vanity)

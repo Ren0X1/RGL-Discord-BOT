@@ -47,6 +47,10 @@ COGS = (
     "cogs.tickets",
     "cogs.ai_chat",
     "cogs.releases",
+    "cogs.health",
+    "cogs.automod",
+    "cogs.botinfo",
+    "cogs.csstats",
 )
 
 
