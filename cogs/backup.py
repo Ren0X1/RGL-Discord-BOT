@@ -123,9 +123,13 @@ class Backup(commands.Cog):
                         completo = os.path.join(raiz, f)
                         z.write(completo, os.path.join("data", os.path.relpath(completo, DATA_DIR)))
             if config.BACKUP_INCLUDE_ENV:
-                env = os.path.join(_RAIZ, ".env")
-                if os.path.exists(env):
-                    z.write(env, ".env")
+                # todos los .env* de la raíz, al mismo nivel que data/
+                for f in sorted(os.listdir(_RAIZ)):
+                    if not f.startswith(".env") or f.endswith((".swp", ".swo", "~")):
+                        continue
+                    completo = os.path.join(_RAIZ, f)
+                    if os.path.isfile(completo):
+                        z.write(completo, f)
         return destino
 
     def _subir(self, ruta):
