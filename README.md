@@ -1,4 +1,4 @@
-# RGL Discord BOT
+# RGL Discord BOT [![📦 Auto Release](https://github.com/Ren0X1/RGL-Discord-BOT/actions/workflows/release.yml/badge.svg)](https://github.com/Ren0X1/RGL-Discord-BOT/actions/workflows/release.yml)
 
 Bot de Discord **todo-en-uno** con **panel web de control**, autoalojado en una **Raspberry Pi Zero 2 W**. Incluye moderación, registro de auditoría, recordatorios, eventos, encuestas, sistema de tickets, canales-contador, scrims, y un panel web con tema "hacker" para administrar el bot y la máquina desde el navegador (también en remoto).
 
