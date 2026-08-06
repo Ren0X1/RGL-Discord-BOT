@@ -24,7 +24,9 @@ import re
 import json
 import time
 import random
+import asyncio
 import logging
+import unicodedata
 from datetime import time as dtime, datetime, timedelta, timezone
 
 import aiohttp
@@ -48,7 +50,10 @@ CONTEXT_PATH = os.path.join(_RAIZ, "ai_context.json")
 SAVED_PATH = os.path.join(_RAIZ, "ai_saved.json")
 README_PATH = os.path.join(_RAIZ, "README.md")
 STATE_PATH = os.path.join(_RAIZ, "ai_state.json")
-MAX_DATOS = 12
+MAX_DATOS = 18            # tope duro de datos por persona/servidor
+OBJETIVO_DATOS = 10       # a cuántos comprime la consolidación
+UMBRAL_CONSOLIDA = 14     # a partir de aquí, la tarea diaria fusiona
+APRENDER_CADA = 5         # cada cuántos mensajes captura contexto (aunque no responda)
 README_MAX = 6000
 LIMITE_DISCORD = 1990
 
@@ -84,8 +89,59 @@ def _dividir(texto):
     return salida[:5]   # tope de seguridad: máximo 5 mensajes seguidos
 
 
-def _lista_limpia(x):
-    return [s.strip() for s in x if isinstance(s, str) and s.strip()][:MAX_DATOS] if isinstance(x, list) else []
+def _hoy():
+    return datetime.now(_TZ).strftime("%Y-%m-%d")
+
+
+def _clave(texto):
+    """Normaliza un texto para comparar duplicados (sin tildes ni puntuación)."""
+    t = unicodedata.normalize("NFKD", (texto or "").lower())
+    t = "".join(c for c in t if not unicodedata.combining(c))
+    t = re.sub(r"[^a-z0-9 ]", " ", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def _norm_lista(lista):
+    """Migra a [{texto,veces,ult}] desde textos sueltos (formato viejo) o dicts."""
+    out = []
+    for x in (lista or []):
+        if isinstance(x, str):
+            t = x.strip()
+            if t:
+                out.append({"texto": t, "veces": 1, "ult": _hoy()})
+        elif isinstance(x, dict):
+            t = (x.get("texto") or "").strip()
+            if t:
+                out.append({"texto": t, "veces": int(x.get("veces", 1) or 1),
+                            "ult": x.get("ult") or _hoy()})
+    return out
+
+
+def _ordenar(lista):
+    return sorted(lista, key=lambda d: (int(d.get("veces", 1) or 1), d.get("ult", "")), reverse=True)
+
+
+def _top_textos(lista, n=None):
+    orden = _ordenar(_norm_lista(lista))
+    return [d["texto"] for d in (orden[:n] if n else orden)]
+
+
+def _reforzar(lista, texto):
+    """Añade un dato o, si ya existe uno equivalente, lo refuerza (veces++)."""
+    t = (texto or "").strip()
+    k = _clave(t)
+    if len(k) < 3:
+        return
+    for it in lista:
+        if _clave(it.get("texto", "")) == k:
+            it["veces"] = int(it.get("veces", 1) or 1) + 1
+            it["ult"] = _hoy()
+            return
+    lista.append({"texto": t, "veces": 1, "ult": _hoy()})
+
+
+def _podar(lista, tope=MAX_DATOS):
+    return _ordenar(_norm_lista(lista))[:tope]
 
 
 class AIChat(commands.Cog):
@@ -94,11 +150,16 @@ class AIChat(commands.Cog):
         self._ultima = 0.0
         self._readme = None
         self._etiquetado = False
+        self._contador = {}        # gid -> mensajes desde el último aprendizaje
+        self._aprendiendo = False
         if config.AI_SUMMARY_CHANNEL_ID and config.AI_API_KEY:
             self.resumen_diario.start()
+        if config.AI_MEMORY and config.AI_API_KEY:
+            self.consolidar_memoria.start()
 
     def cog_unload(self):
         self.resumen_diario.cancel()
+        self.consolidar_memoria.cancel()
 
     # ---------- JSON genérico ----------
     def _load(self, path):
@@ -199,6 +260,16 @@ class AIChat(commands.Cog):
             self._save(CONTEXT_PATH, d)
 
     # ---------- memoria autoguardada ----------
+    def _saved_load(self):
+        """Carga ai_saved.json migrando datos/estilo al formato {texto,veces,ult}."""
+        d = self._load(SAVED_PATH)
+        for s in d["servidores"]:
+            s["datos"] = _norm_lista(s.get("datos"))
+            s["estilo"] = _norm_lista(s.get("estilo"))
+            for u in s.get("usuarios", []):
+                u["datos"] = _norm_lista(u.get("datos"))
+        return d
+
     def _saved_server_obj(self, d, gid):
         s = self._find_server(d, gid)
         if s is None:
@@ -210,49 +281,55 @@ class AIChat(commands.Cog):
         return s
 
     def _saved_server_datos(self, gid):
-        s = self._find_server(self._load(SAVED_PATH), gid)
+        s = self._find_server(self._saved_load(), gid)
         return s.get("datos", []) if s else []
 
     def _saved_server_estilo(self, gid):
-        s = self._find_server(self._load(SAVED_PATH), gid)
+        s = self._find_server(self._saved_load(), gid)
         return s.get("estilo", []) if s else []
 
     def _saved_find_user(self, gid, uid):
-        s = self._find_server(self._load(SAVED_PATH), gid)
+        s = self._find_server(self._saved_load(), gid)
         for u in (s.get("usuarios", []) if s else []):
             if u.get("id") == uid:
                 return u
         return None
 
-    def _aplicar_consolidado(self, gid, participantes, obj):
-        d = self._load(SAVED_PATH)
-        s = self._saved_server_obj(d, gid)
-        serv = obj.get("servidor") or {}
-        if isinstance(serv, dict):
-            if "datos" in serv:
-                s["datos"] = _lista_limpia(serv.get("datos"))
-            if "estilo" in serv:
-                s["estilo"] = _lista_limpia(serv.get("estilo"))
-        por_nombre = {n.lower(): i for i, n in participantes}
-        nombre_de = {i: n for i, n in participantes}
-        etiquetas = {}
-        for item in (obj.get("usuarios") or []):
-            if not isinstance(item, dict):
-                continue
-            uid = por_nombre.get((item.get("nombre") or "").strip().lower())
-            if not uid:
-                continue
-            u = next((x for x in s["usuarios"] if x.get("id") == uid), None)
-            if u is None:
-                u = {"id": uid}
-                s["usuarios"].append(u)
-            u["nombre"] = nombre_de.get(uid, u.get("nombre", ""))
-            u["mote"] = (item.get("mote") or "").strip() or u.get("mote", "")
-            u["datos"] = _lista_limpia(item.get("datos"))
-            etiquetas[uid] = (u["nombre"], u["mote"])
-        self._save(SAVED_PATH, d)
-        if etiquetas:
-            self._etiquetar_contexto(gid, etiquetas)
+    async def _fusionar(self, lista, quien=""):
+        """Pide a la IA fusionar/compactar una lista de {texto,veces} a ~OBJETIVO_DATOS."""
+        entradas = _ordenar(_norm_lista(lista))
+        if len(entradas) <= OBJETIVO_DATOS:
+            return None
+        payload = [{"texto": e["texto"], "veces": e.get("veces", 1)} for e in entradas]
+        sys = (
+            "Recibes una lista JSON de datos memorizados sobre " + (quien or "un servidor") + ", cada uno "
+            "con 'veces' (cuántas veces se ha visto). FUSIONA los que digan lo mismo o casi lo mismo en UNO "
+            "solo (el más completo y corto) SUMANDO sus 'veces'; elimina lo trivial, obsoleto o "
+            "contradictorio; prioriza lo de más 'veces'. Deja como MUCHO " + str(OBJETIVO_DATOS) + " datos. "
+            'Devuelve SOLO JSON: {"datos":[{"texto":"","veces":N}]}.'
+        )
+        data = await self._api([{"role": "system", "content": sys},
+                                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}])
+        if not data:
+            return None
+        try:
+            txt = (data["choices"][0]["message"].get("content") or "").strip()
+        except (KeyError, IndexError, TypeError):
+            return None
+        txt = txt.replace("```json", "").replace("```", "").strip()
+        try:
+            obj = json.loads(txt)
+        except ValueError:
+            return None
+        bruto = obj.get("datos") if isinstance(obj, dict) else obj
+        salida = []
+        for it in (bruto or []):
+            if isinstance(it, dict) and (it.get("texto") or "").strip():
+                salida.append({"texto": it["texto"].strip(),
+                               "veces": int(it.get("veces", 1) or 1), "ult": _hoy()})
+            elif isinstance(it, str) and it.strip():
+                salida.append({"texto": it.strip(), "veces": 1, "ult": _hoy()})
+        return _podar(salida, OBJETIVO_DATOS) if salida else None
 
     # ---------- al arrancar: completar nombre/mote desde Discord ----------
     @commands.Cog.listener()
@@ -331,6 +408,15 @@ class AIChat(commands.Cog):
         if not self._activo():
             return
 
+        gid = message.guild.id
+
+        # --- aprendizaje por nº de mensajes (aunque el bot no responda) ---
+        if config.AI_MEMORY:
+            self._contador[gid] = self._contador.get(gid, 0) + 1
+            if self._contador[gid] >= APRENDER_CADA and not self._aprendiendo:
+                self._contador[gid] = 0
+                asyncio.create_task(self._aprender_seguro(message))
+
         directo = self._es_directo(message)
         if not directo:
             if _rng.random() > config.AI_CHANCE:
@@ -344,7 +430,7 @@ class AIChat(commands.Cog):
         try:
             historial, participantes = await self._recopilar(message)
             async with message.channel.typing():
-                respuesta = await self._generar(message.guild.id, historial, participantes, incluir_readme)
+                respuesta = await self._generar(gid, historial, participantes, incluir_readme)
             if respuesta:
                 primero = True
                 for tr in _dividir(respuesta):
@@ -357,11 +443,15 @@ class AIChat(commands.Cog):
             log.warning("Fallo al responder con IA: %s", exc)
             return
 
-        if config.AI_MEMORY:
-            try:
-                await self._aprender(message.guild.id, historial, participantes)
-            except Exception as exc:
-                log.warning("Fallo al aprender/consolidar: %s", exc)
+    async def _aprender_seguro(self, message):
+        self._aprendiendo = True
+        try:
+            historial, participantes = await self._recopilar(message)
+            await self._capturar(message.guild.id, historial, participantes)
+        except Exception as exc:
+            log.warning("Fallo al aprender: %s", exc)
+        finally:
+            self._aprendiendo = False
 
     # ---------- recopilar ----------
     async def _recopilar(self, message):
@@ -392,10 +482,10 @@ class AIChat(commands.Cog):
         sc = self._ctx_servidor(gid)
         if sc:
             serv.append(sc)
-        serv += self._saved_server_datos(gid)
+        serv += _top_textos(self._saved_server_datos(gid), 12)
         if serv:
             partes.append("Contexto del servidor (vale para todos): " + " · ".join(serv))
-        estilo = self._saved_server_estilo(gid)
+        estilo = _top_textos(self._saved_server_estilo(gid), 10)
         if estilo:
             partes.append("Expresiones/jerga del grupo (úsalas para sonar como ellos): " + " · ".join(estilo))
         lineas = []
@@ -407,7 +497,7 @@ class AIChat(commands.Cog):
             if cu and cu.get("contexto"):
                 info.append(cu["contexto"])
             if su:
-                info += su.get("datos", [])
+                info += _top_textos(su.get("datos"), 12)
             etiqueta = nombre + (f" (alias '{mote}')" if mote else "")
             if info:
                 lineas.append(f"- {etiqueta}: " + " · ".join(info))
@@ -450,8 +540,8 @@ class AIChat(commands.Cog):
                 texto = m.group(2).strip()
         return texto or None
 
-    # ---------- aprender + consolidar ----------
-    async def _aprender(self, gid, historial, participantes):
+    # ---------- capturar (aditivo, mapeo por número) ----------
+    async def _capturar(self, gid, historial, participantes):
         lineas = []
         for m in historial:
             c = (m.content or "").strip()
@@ -459,36 +549,36 @@ class AIChat(commands.Cog):
                 continue
             quien = "BOT" if (self.bot.user and m.author.id == self.bot.user.id) else m.author.display_name
             lineas.append(f"{quien}: {c[:300]}")
-        if not lineas:
+        if len(lineas) < 2:
             return
 
-        memoria = {
-            "servidor": {"datos": self._saved_server_datos(gid), "estilo": self._saved_server_estilo(gid)},
-            "usuarios": [],
-        }
+        vistos, orden = set(), []
         for uid, nombre in participantes:
-            su = self._saved_find_user(gid, uid)
-            memoria["usuarios"].append({
-                "nombre": nombre,
-                "mote": (su or {}).get("mote", ""),
-                "datos": (su or {}).get("datos", []),
-            })
+            if uid not in vistos:
+                vistos.add(uid)
+                orden.append((uid, nombre))
 
-        nombres = ", ".join(n for _, n in participantes)
+        d = self._saved_load()
+        s = self._saved_server_obj(d, gid)
+        conocido_serv = _top_textos(s.get("datos"), 12)
+        fichas = []
+        for i, (uid, nombre) in enumerate(orden, 1):
+            u = next((x for x in s["usuarios"] if x.get("id") == uid), None)
+            ya = _top_textos((u or {}).get("datos"), 10)
+            fichas.append(f"[{i}] {nombre}" + (f" (ya sabes: {'; '.join(ya)})" if ya else ""))
+
         sys = (
-            "Eres el sistema de memoria de un bot de Discord. Te paso la MEMORIA ACTUAL (JSON) y una "
-            "CONVERSACIÓN reciente. Devuelve la memoria ACTUALIZADA y MUY OPTIMIZADA, con la misma "
-            "estructura. REGLAS: añade datos nuevos relevantes; FUSIONA de forma agresiva los duplicados "
-            "y las frases parecidas dejando UNA sola, la más completa y corta; NO acumules variantes de "
-            "lo mismo; elimina lo trivial, lo obsoleto y lo contradictorio. Frases cortas y claras. "
-            "Detecta MOTES/apodos (campo 'mote'). En 'estilo' guarda expresiones o jerga típicas del grupo. "
-            "MÁXIMO 8 datos por persona y 8 del servidor. Devuelve SOLO JSON válido, con la forma: "
-            '{"servidor": {"datos": [], "estilo": []}, "usuarios": [{"nombre": "X", "mote": "", "datos": []}]}. '
-            f"Usa exactamente estos nombres: {nombres}."
+            "Eres el sistema de memoria de un bot de Discord. Lee la CONVERSACIÓN y extrae SOLO hechos "
+            "NUEVOS, concretos y claramente dichos sobre estas personas o sobre el servidor (gustos, manías, "
+            "relaciones, curro, juegos, cosas que pasan). NO repitas ni reformules lo que ya se sabe. NO "
+            "inventes. Frases muy cortas. Identifica a cada persona por su NÚMERO [n]. Detecta motes/apodos. "
+            "En 'estilo' guarda expresiones o jerga típicas del grupo que aparezcan. Devuelve SOLO JSON con "
+            'la forma: {"servidor":[], "estilo":[], "usuarios":[{"n":1, "mote":"", "datos":[]}]}. '
+            "Si no hay nada nuevo, devuelve listas vacías.\n\nPERSONAS:\n" + "\n".join(fichas)
+            + (("\n\nYA SABES DEL SERVIDOR: " + "; ".join(conocido_serv)) if conocido_serv else "")
         )
-        user = ("MEMORIA ACTUAL:\n" + json.dumps(memoria, ensure_ascii=False)
-                + "\n\nCONVERSACIÓN:\n" + "\n".join(lineas))
-        data = await self._api([{"role": "system", "content": sys}, {"role": "user", "content": user}])
+        data = await self._api([{"role": "system", "content": sys},
+                                {"role": "user", "content": "CONVERSACIÓN:\n" + "\n".join(lineas)}])
         if not data:
             return
         try:
@@ -500,8 +590,83 @@ class AIChat(commands.Cog):
             obj = json.loads(txt)
         except ValueError:
             return
-        if isinstance(obj, dict):
-            self._aplicar_consolidado(gid, participantes, obj)
+        if not isinstance(obj, dict):
+            return
+
+        cambios = False
+        etiquetas = {}
+        for t in (obj.get("servidor") or []):
+            if isinstance(t, str) and t.strip():
+                _reforzar(s["datos"], t)
+                cambios = True
+        for t in (obj.get("estilo") or []):
+            if isinstance(t, str) and t.strip():
+                _reforzar(s["estilo"], t)
+                cambios = True
+        for item in (obj.get("usuarios") or []):
+            if not isinstance(item, dict):
+                continue
+            try:
+                n = int(item.get("n"))
+            except (TypeError, ValueError):
+                continue
+            if not (1 <= n <= len(orden)):
+                continue
+            uid, nombre = orden[n - 1]
+            u = next((x for x in s["usuarios"] if x.get("id") == uid), None)
+            if u is None:
+                u = {"id": uid, "nombre": nombre, "mote": "", "datos": []}
+                s["usuarios"].append(u)
+            u.setdefault("datos", [])
+            u["nombre"] = nombre or u.get("nombre", "")
+            mote = (item.get("mote") or "").strip()
+            if mote:
+                u["mote"] = mote
+            for t in (item.get("datos") or []):
+                if isinstance(t, str) and t.strip():
+                    _reforzar(u["datos"], t)
+                    cambios = True
+            u["datos"] = _podar(u["datos"])
+            etiquetas[uid] = (u["nombre"], u.get("mote", ""))
+
+        s["datos"] = _podar(s["datos"])
+        s["estilo"] = _podar(s["estilo"])
+        if cambios:
+            self._save(SAVED_PATH, d)
+            if etiquetas:
+                self._etiquetar_contexto(gid, etiquetas)
+
+    # ---------- consolidación diaria (fusiona duplicados/parecidos) ----------
+    @tasks.loop(time=dtime(hour=5, tzinfo=_TZ))
+    async def consolidar_memoria(self):
+        if not config.AI_API_KEY:
+            return
+        d = self._saved_load()
+        cambios = False
+        for s in d["servidores"]:
+            if len(s.get("datos", [])) > UMBRAL_CONSOLIDA:
+                nuevo = await self._fusionar(s["datos"])
+                if nuevo is not None:
+                    s["datos"] = nuevo
+                    cambios = True
+            if len(s.get("estilo", [])) > UMBRAL_CONSOLIDA:
+                nuevo = await self._fusionar(s["estilo"])
+                if nuevo is not None:
+                    s["estilo"] = nuevo
+                    cambios = True
+            for u in s.get("usuarios", []):
+                if len(u.get("datos", [])) > UMBRAL_CONSOLIDA:
+                    nuevo = await self._fusionar(u["datos"], quien=u.get("nombre", ""))
+                    if nuevo is not None:
+                        u["datos"] = nuevo
+                        cambios = True
+        if cambios:
+            self._save(SAVED_PATH, d)
+            log.info("Memoria de IA consolidada")
+
+    @consolidar_memoria.before_loop
+    async def _antes_consolidar(self):
+        await self.bot.wait_until_ready()
 
     # ---------- resumen diario (#7) ----------
     @tasks.loop(time=dtime(hour=config.AI_SUMMARY_HOUR, tzinfo=_TZ))
@@ -586,20 +751,20 @@ class AIChat(commands.Cog):
             return
         gid = interaction.guild.id
         s = self._find_server(self._load(CONTEXT_PATH), gid)
-        sv = self._find_server(self._load(SAVED_PATH), gid)
+        sv = self._find_server(self._saved_load(), gid)
         lineas = []
         if s and s.get("contexto"):
             lineas.append(f"**🌐 Servidor (manual)**: {s['contexto'][:120]}")
         if sv and sv.get("datos"):
-            lineas.append(f"**🧠 Servidor (recordado)**: {', '.join(sv['datos'])[:200]}")
+            lineas.append(f"**🧠 Servidor (recordado)**: {', '.join(_top_textos(sv['datos'], 12))[:200]}")
         if sv and sv.get("estilo"):
-            lineas.append(f"**🗣️ Estilo**: {', '.join(sv['estilo'])[:150]}")
+            lineas.append(f"**🗣️ Estilo**: {', '.join(_top_textos(sv['estilo'], 10))[:150]}")
         for u in (sv.get("usuarios", []) if sv else []):
             etiq = u.get("nombre") or u.get("id")
             if u.get("mote"):
                 etiq += f" ('{u['mote']}')"
             if u.get("datos"):
-                lineas.append(f"**{etiq}**: {', '.join(u['datos'])[:200]}")
+                lineas.append(f"**{etiq}**: {', '.join(_top_textos(u['datos'], 12))[:200]}")
         msg = "\n".join(lineas) if lineas else "No hay contextos ni memoria en este servidor."
         await interaction.response.send_message(msg[:1900], ephemeral=True)
 
