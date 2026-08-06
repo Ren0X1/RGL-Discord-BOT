@@ -216,5 +216,5 @@ BACKUP_ENABLED = _bool("BACKUP_ENABLED", False)
 BACKUP_INTERVAL_HOURS = max(1, _int("BACKUP_INTERVAL_HOURS", 12))   # cada cuántas horas
 BACKUP_KEEP = max(1, _int("BACKUP_KEEP", 10))                       # cuántos backups conservar
 BACKUP_INCLUDE_ENV = _bool("BACKUP_INCLUDE_ENV", False)             # incluir .env (contiene claves)
-GDRIVE_FOLDER_ID = os.getenv("GDRIVE_FOLDER_ID", "")                # carpeta destino en tu Drive
-GDRIVE_CREDENTIALS = os.getenv("GDRIVE_CREDENTIALS", "data/gdrive.json")   # clave de la cuenta de servicio
+GDRIVE_FOLDER_NAME = os.getenv("GDRIVE_FOLDER_NAME", "RGL-Bot-Backups")   # carpeta que crea el bot en tu Drive
+GDRIVE_TOKEN = os.getenv("GDRIVE_TOKEN", "data/gdrive_token.json")        # token OAuth (scripts/autorizar_gdrive.py)

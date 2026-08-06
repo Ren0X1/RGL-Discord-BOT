@@ -6,21 +6,25 @@ JSON de la IA) en un .zip con fecha, lo sube a una carpeta de tu Google Drive y
 borra los backups viejos dejando solo los BACKUP_KEEP más recientes.
 
 Comandos:
-  /backup            -> lanza un backup ahora mismo (staff)
-  /backups           -> lista los backups que hay en Drive (staff)
+  /backup     -> lanza un backup ahora mismo (staff)
+  /backups    -> lista los backups que hay en Drive (staff)
+
+AUTENTICACIÓN: OAuth con TU cuenta de Google (no cuenta de servicio: esas no
+tienen espacio propio y Drive rechaza sus subidas). Se autoriza UNA vez con el
+script scripts/autorizar_gdrive.py, que guarda un token con refresh en
+data/gdrive_token.json; a partir de ahí el bot se renueva solo. Los ficheros los
+sube tu usuario, así que ocupan de tu Google One.
+
+Permiso usado: drive.file (mínimo posible). El bot solo ve y gestiona los
+ficheros que él mismo crea, por eso se crea su propia carpeta de backups.
 
 Configuración (.env):
   BACKUP_ENABLED=true
   BACKUP_INTERVAL_HOURS=12
   BACKUP_KEEP=10
-  BACKUP_INCLUDE_ENV=false          # incluir el .env (lleva tus claves: cuidado)
-  GDRIVE_FOLDER_ID=<id de la carpeta de Drive>
-  GDRIVE_CREDENTIALS=data/gdrive.json   # clave JSON de la cuenta de servicio
-
-IMPORTANTE: se usa una CUENTA DE SERVICIO de Google Cloud. Hay que compartir la
-carpeta de tu Drive con el email de esa cuenta (…@….iam.gserviceaccount.com) con
-permiso de Editor; si no, los ficheros irían a la cuota de la cuenta de servicio
-(que es 0) y fallaría la subida.
+  BACKUP_INCLUDE_ENV=false            # incluir el .env (lleva tus claves: cuidado)
+  GDRIVE_FOLDER_NAME=RGL-Bot-Backups  # carpeta que crea el bot en tu Drive
+  GDRIVE_TOKEN=data/gdrive_token.json
 """
 
 import os
@@ -47,7 +51,8 @@ class Backup(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self._servicio = None
-        if config.BACKUP_ENABLED and config.GDRIVE_FOLDER_ID and self._ruta_credenciales():
+        self._carpeta_id = None
+        if config.BACKUP_ENABLED and self._ruta_token():
             self.backup_automatico.change_interval(hours=config.BACKUP_INTERVAL_HOURS)
             self.backup_automatico.start()
 
@@ -55,8 +60,8 @@ class Backup(commands.Cog):
         self.backup_automatico.cancel()
 
     # ---------- Google Drive ----------
-    def _ruta_credenciales(self):
-        ruta = config.GDRIVE_CREDENTIALS
+    def _ruta_token(self):
+        ruta = config.GDRIVE_TOKEN
         if not ruta:
             return None
         if not os.path.isabs(ruta):
@@ -64,15 +69,46 @@ class Backup(commands.Cog):
         return ruta if os.path.exists(ruta) else None
 
     def _drive(self):
-        """Crea (y cachea) el cliente de Drive. Bloqueante: llamar en un hilo."""
+        """Crea (y cachea) el cliente de Drive con tu token OAuth.
+        Bloqueante: llamar siempre dentro de asyncio.to_thread."""
         if self._servicio is not None:
             return self._servicio
-        from google.oauth2 import service_account
+        from google.oauth2.credentials import Credentials
+        from google.auth.transport.requests import Request
         from googleapiclient.discovery import build
-        creds = service_account.Credentials.from_service_account_file(
-            self._ruta_credenciales(), scopes=SCOPES)
+        ruta = self._ruta_token()
+        creds = Credentials.from_authorized_user_file(ruta, SCOPES)
+        if not creds.valid:
+            if creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+                with open(ruta, "w", encoding="utf-8") as f:
+                    f.write(creds.to_json())
+            else:
+                raise RuntimeError("El token de Google no vale. Vuelve a ejecutar "
+                                   "scripts/autorizar_gdrive.py")
         self._servicio = build("drive", "v3", credentials=creds, cache_discovery=False)
         return self._servicio
+
+    def _carpeta(self):
+        """Busca (o crea) la carpeta de backups en tu Drive y devuelve su ID."""
+        if self._carpeta_id:
+            return self._carpeta_id
+        servicio = self._drive()
+        nombre = config.GDRIVE_FOLDER_NAME
+        res = servicio.files().list(
+            q=("mimeType='application/vnd.google-apps.folder' and "
+               f"name='{nombre}' and trashed=false"),
+            pageSize=1, fields="files(id,name)").execute()
+        ficheros = res.get("files", [])
+        if ficheros:
+            self._carpeta_id = ficheros[0]["id"]
+        else:
+            carpeta = servicio.files().create(
+                body={"name": nombre, "mimeType": "application/vnd.google-apps.folder"},
+                fields="id").execute()
+            self._carpeta_id = carpeta["id"]
+            log.info("Carpeta de backups creada en Drive: %s", nombre)
+        return self._carpeta_id
 
     def _comprimir(self):
         """Crea el zip del contenido de data/ y devuelve su ruta."""
@@ -82,7 +118,7 @@ class Backup(commands.Cog):
             if os.path.isdir(DATA_DIR):
                 for raiz, _dirs, ficheros in os.walk(DATA_DIR):
                     for f in ficheros:
-                        if f.startswith(PREFIJO) or f == os.path.basename(self._ruta_credenciales() or ""):
+                        if f.startswith(PREFIJO) or f.startswith("gdrive_") or f == "gdrive.json":
                             continue
                         completo = os.path.join(raiz, f)
                         z.write(completo, os.path.join("data", os.path.relpath(completo, DATA_DIR)))
@@ -95,20 +131,18 @@ class Backup(commands.Cog):
     def _subir(self, ruta):
         from googleapiclient.http import MediaFileUpload
         servicio = self._drive()
-        meta = {"name": os.path.basename(ruta), "parents": [config.GDRIVE_FOLDER_ID]}
+        meta = {"name": os.path.basename(ruta), "parents": [self._carpeta()]}
         media = MediaFileUpload(ruta, mimetype="application/zip", resumable=False)
         fichero = servicio.files().create(body=meta, media_body=media,
-                                          fields="id,name,size,webViewLink",
-                                          supportsAllDrives=True).execute()
+                                          fields="id,name,size,webViewLink").execute()
         return fichero
 
     def _listar(self):
         servicio = self._drive()
         res = servicio.files().list(
-            q=f"'{config.GDRIVE_FOLDER_ID}' in parents and name contains '{PREFIJO}' and trashed=false",
+            q=f"'{self._carpeta()}' in parents and name contains '{PREFIJO}' and trashed=false",
             orderBy="createdTime desc", pageSize=50,
-            fields="files(id,name,size,createdTime)",
-            supportsAllDrives=True, includeItemsFromAllDrives=True).execute()
+            fields="files(id,name,size,createdTime)").execute()
         return res.get("files", [])
 
     def _rotar(self):
@@ -118,7 +152,7 @@ class Backup(commands.Cog):
         servicio = self._drive()
         for f in sobran:
             try:
-                servicio.files().delete(fileId=f["id"], supportsAllDrives=True).execute()
+                servicio.files().delete(fileId=f["id"]).execute()
             except Exception as exc:
                 log.warning("No pude borrar el backup %s: %s", f.get("name"), exc)
         return len(sobran)
@@ -169,11 +203,9 @@ class Backup(commands.Cog):
     def _comprobar(self, interaction):
         if not interaction.user.guild_permissions.manage_guild:
             return "Necesitas **Gestionar servidor**."
-        if not config.GDRIVE_FOLDER_ID:
-            return "Falta `GDRIVE_FOLDER_ID` en el `.env`."
-        if not self._ruta_credenciales():
-            return (f"No encuentro las credenciales de Google (`{config.GDRIVE_CREDENTIALS}`). "
-                    "Sube la clave JSON de la cuenta de servicio.")
+        if not self._ruta_token():
+            return (f"No encuentro el token de Google (`{config.GDRIVE_TOKEN}`). "
+                    "Ejecuta `python3 scripts/autorizar_gdrive.py` para autorizarlo.")
         return None
 
     @app_commands.command(name="backup", description="Lanza ahora un backup de los datos del bot a Google Drive")

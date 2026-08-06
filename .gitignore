@@ -69,3 +69,5 @@ data/cs_links.json
 
 # Credenciales de Google Drive (cuenta de servicio)
 data/gdrive.json
+data/gdrive_client.json
+data/gdrive_token.json
