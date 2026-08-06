@@ -66,3 +66,6 @@ data/releases_state.json
 data/levels.db
 data/reaction_roles.json
 data/cs_links.json
+
+# Credenciales de Google Drive (cuenta de servicio)
+data/gdrive.json

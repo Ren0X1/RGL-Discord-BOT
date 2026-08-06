@@ -53,6 +53,7 @@ COGS = (
     "cogs.csstats",
     "cogs.levels",
     "cogs.reactionroles",
+    "cogs.backup",
 )
 
 

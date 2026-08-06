@@ -210,3 +210,11 @@ LEVELS_XP_MAX = max(1, _int("LEVELS_XP_MAX", 25))          # XP máxima por mens
 LEVELS_COOLDOWN = max(0, _int("LEVELS_COOLDOWN", 60))      # segundos entre XP del mismo usuario
 LEVELS_ANNOUNCE_CHANNEL_ID = _int("LEVELS_ANNOUNCE_CHANNEL_ID")   # vacío = mismo canal
 LEVELS_IGNORED_CHANNELS = _ids("LEVELS_IGNORED_CHANNELS")  # canales que no dan XP
+
+# --- 24) Backups a Google Drive ---
+BACKUP_ENABLED = _bool("BACKUP_ENABLED", False)
+BACKUP_INTERVAL_HOURS = max(1, _int("BACKUP_INTERVAL_HOURS", 12))   # cada cuántas horas
+BACKUP_KEEP = max(1, _int("BACKUP_KEEP", 10))                       # cuántos backups conservar
+BACKUP_INCLUDE_ENV = _bool("BACKUP_INCLUDE_ENV", False)             # incluir .env (contiene claves)
+GDRIVE_FOLDER_ID = os.getenv("GDRIVE_FOLDER_ID", "")                # carpeta destino en tu Drive
+GDRIVE_CREDENTIALS = os.getenv("GDRIVE_CREDENTIALS", "data/gdrive.json")   # clave de la cuenta de servicio
