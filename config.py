@@ -202,3 +202,11 @@ try:
         BOT_VERSION = _vf.read().strip() or "dev"
 except OSError:
     BOT_VERSION = "dev"
+
+# --- 23) Niveles y XP ---
+LEVELS_ENABLED = _bool("LEVELS_ENABLED", True)
+LEVELS_XP_MIN = max(1, _int("LEVELS_XP_MIN", 15))          # XP mínima por mensaje
+LEVELS_XP_MAX = max(1, _int("LEVELS_XP_MAX", 25))          # XP máxima por mensaje
+LEVELS_COOLDOWN = max(0, _int("LEVELS_COOLDOWN", 60))      # segundos entre XP del mismo usuario
+LEVELS_ANNOUNCE_CHANNEL_ID = _int("LEVELS_ANNOUNCE_CHANNEL_ID")   # vacío = mismo canal
+LEVELS_IGNORED_CHANNELS = _ids("LEVELS_IGNORED_CHANNELS")  # canales que no dan XP

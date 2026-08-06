@@ -10,6 +10,14 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
 ---
 
+## [0.25.0.f0] - 2026-08-06 · ✨ feature
+### ✨ Añadido
+- 🧠 **Control de la memoria de la IA**: `/ia_memoria` (ver numerado), `/ia_olvidar` (borrar un dato concreto) y `/ia_reset` (resetear usuario o servidor).
+- 🎯 **Perfiles de CS vinculados**: `/cs_vincular` y `/cs_desvincular`; `/cs` ya funciona sin parámetros y acepta @menciones.
+- ⚔️ **`/cs_comparar`**: compara hasta 4 perfiles o usuarios (los usuarios deben tener perfil vinculado).
+- 🏅 **Niveles y XP**: XP por participar, `/rank` con barra de progreso, `/leaderboard` top 10 y `/xp_dar` / `/xp_reset` para staff.
+- 🎛️ **Roles por botón**: paneles configurables por comando (`/roles_crear`, `/roles_add`, `/roles_quitar`, `/roles_listar`, `/roles_publicar`, `/roles_borrar`) con botones persistentes.
+
 ## [0.23.0.f0] - 2026-08-06 · ✨ feature
 ### 🧠 Mejorado
 - **Memoria de la IA mucho más lista**: aprende cada 5 mensajes (aunque no responda), de forma **aditiva** (ya no se pisa lo aprendido), mapea a la gente **por número** (no se pierden datos), **refuerza** lo que se repite (`veces`) y **consolida a diario** fusionando duplicados. Migra sola el formato antiguo.

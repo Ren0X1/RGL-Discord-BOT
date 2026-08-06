@@ -771,5 +771,91 @@ class AIChat(commands.Cog):
         await interaction.response.send_message(msg[:1900], ephemeral=True)
 
 
+    @app_commands.command(name="ia_memoria", description="Ver lo que la IA ha aprendido de alguien (numerado)")
+    @app_commands.describe(usuario="Usuario (vacío = memoria del servidor)")
+    async def ia_memoria(self, interaction: discord.Interaction, usuario: discord.Member = None):
+        if not self._es_admin(interaction):
+            await interaction.response.send_message("Necesitas **Gestionar servidor**.", ephemeral=True)
+            return
+        gid = interaction.guild.id
+        if usuario:
+            u = self._saved_find_user(gid, usuario.id)
+            datos = _ordenar(_norm_lista((u or {}).get("datos")))
+            titulo = f"🧠 Memoria de {usuario.display_name}"
+            if u and u.get("mote"):
+                titulo += f" (alias '{u['mote']}')"
+        else:
+            s = self._find_server(self._saved_load(), gid)
+            datos = _ordenar(_norm_lista((s or {}).get("datos")))
+            titulo = "🧠 Memoria del servidor"
+        if not datos:
+            await interaction.response.send_message(f"{titulo}: no hay nada guardado todavía.", ephemeral=True)
+            return
+        lineas = [f"`{i}.` {d['texto']}  ·  ×{d.get('veces', 1)}" for i, d in enumerate(datos, 1)]
+        e = discord.Embed(title=titulo, description="\n".join(lineas)[:3900], color=0x00ff66)
+        e.set_footer(text="Usa /ia_olvidar con el número para borrar un dato")
+        await interaction.response.send_message(embed=e, ephemeral=True)
+
+    @app_commands.command(name="ia_olvidar", description="Borra un dato concreto que la IA haya aprendido")
+    @app_commands.describe(numero="Número del dato (míralo con /ia_memoria)",
+                           usuario="Usuario dueño del dato (vacío = memoria del servidor)")
+    async def ia_olvidar(self, interaction: discord.Interaction, numero: int, usuario: discord.Member = None):
+        if not self._es_admin(interaction):
+            await interaction.response.send_message("Necesitas **Gestionar servidor**.", ephemeral=True)
+            return
+        gid = interaction.guild.id
+        d = self._saved_load()
+        s = self._find_server(d, gid)
+        if s is None:
+            await interaction.response.send_message("No hay memoria en este servidor.", ephemeral=True)
+            return
+        if usuario:
+            destino = next((x for x in s.get("usuarios", []) if x.get("id") == usuario.id), None)
+            quien = usuario.display_name
+        else:
+            destino = s
+            quien = "el servidor"
+        datos = _ordenar(_norm_lista((destino or {}).get("datos")))
+        if not datos or not (1 <= numero <= len(datos)):
+            await interaction.response.send_message(
+                f"Ese número no existe. Mira los datos con `/ia_memoria`.", ephemeral=True)
+            return
+        borrado = datos.pop(numero - 1)
+        destino["datos"] = datos
+        self._save(SAVED_PATH, d)
+        await interaction.response.send_message(
+            f"🗑️ Olvidado de **{quien}**: {borrado['texto']}", ephemeral=True)
+
+    @app_commands.command(name="ia_reset", description="Borra TODA la memoria aprendida de alguien o del servidor")
+    @app_commands.describe(usuario="Usuario a resetear (vacío = memoria aprendida del servidor)",
+                           todo="True = borra la memoria aprendida de TODO el servidor y su gente")
+    async def ia_reset(self, interaction: discord.Interaction, usuario: discord.Member = None, todo: bool = False):
+        if not self._es_admin(interaction):
+            await interaction.response.send_message("Necesitas **Gestionar servidor**.", ephemeral=True)
+            return
+        gid = interaction.guild.id
+        d = self._saved_load()
+        s = self._find_server(d, gid)
+        if s is None:
+            await interaction.response.send_message("No hay memoria que borrar.", ephemeral=True)
+            return
+        if todo:
+            s["datos"], s["estilo"], s["usuarios"] = [], [], []
+            msg = "🧹 Borrada toda la memoria **aprendida** del servidor (el contexto manual sigue intacto)."
+        elif usuario:
+            u = next((x for x in s.get("usuarios", []) if x.get("id") == usuario.id), None)
+            if u is None:
+                await interaction.response.send_message(
+                    f"La IA no tiene nada aprendido de {usuario.mention}.", ephemeral=True)
+                return
+            u["datos"] = []
+            msg = f"🧹 Borrada la memoria aprendida de {usuario.mention}."
+        else:
+            s["datos"] = []
+            msg = "🧹 Borrada la memoria aprendida del servidor (la de cada usuario sigue)."
+        self._save(SAVED_PATH, d)
+        await interaction.response.send_message(msg, ephemeral=True)
+
+
 async def setup(bot):
     await bot.add_cog(AIChat(bot))

@@ -51,6 +51,8 @@ COGS = (
     "cogs.automod",
     "cogs.botinfo",
     "cogs.csstats",
+    "cogs.levels",
+    "cogs.reactionroles",
 )
 
 

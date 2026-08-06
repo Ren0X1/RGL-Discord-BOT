@@ -63,3 +63,6 @@ ai_state.json
 
 # Estado de releases ya anunciadas
 data/releases_state.json
+data/levels.db
+data/reaction_roles.json
+data/cs_links.json
