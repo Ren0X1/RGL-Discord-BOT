@@ -194,3 +194,11 @@ AUTOMOD_LOG_CHANNEL_ID = _int("AUTOMOD_LOG_CHANNEL_ID")  # vacío = usa LOG_CHAN
 # --- 22) Estadísticas de Counter-Strike (Leetify + csstats.gg) ---
 LEETIFY_API_KEY = os.getenv("LEETIFY_API_KEY", "")   # opcional: más límite (leetify.com/app/developer)
 STEAM_API_KEY = os.getenv("STEAM_API_KEY", "")       # necesario solo para URLs /id/<nombre> (vanity)
+
+# --- Versión del bot (fichero VERSION en la raíz; lo actualiza el workflow de release) ---
+_DIR_CFG = os.path.dirname(os.path.abspath(__file__))
+try:
+    with open(os.path.join(_DIR_CFG, "VERSION"), encoding="utf-8") as _vf:
+        BOT_VERSION = _vf.read().strip() or "dev"
+except OSError:
+    BOT_VERSION = "dev"

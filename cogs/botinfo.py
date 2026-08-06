@@ -37,6 +37,42 @@ class BotInfo(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.inicio = datetime.datetime.now(datetime.timezone.utc)
+        self._arranque_avisado = False
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        if self._arranque_avisado:
+            return
+        self._arranque_avisado = True
+        cid = config.LOG_CHANNEL_ID
+        canal = self.bot.get_channel(cid) if cid else None
+        if canal is None:
+            return
+        cpu = await cpu_percent()
+        usada, total = ram_uso()
+        temp = temperatura()
+        try:
+            import shutil
+            du = shutil.disk_usage("/")
+            disco = f"{du.used/du.total*100:.0f}% ({du.used/2**30:.1f}/{du.total/2**30:.1f} GB)"
+        except Exception:
+            disco = "—"
+        e = discord.Embed(title="🟢 Bot arrancado",
+                          description=f"**RGL Discord BOT v{config.BOT_VERSION}** está en línea.",
+                          color=0x00ff66, timestamp=datetime.datetime.now(datetime.timezone.utc))
+        e.add_field(name="🏷️ Versión", value=f"v{config.BOT_VERSION} · {_version_git()}", inline=False)
+        e.add_field(name="🧠 CPU", value=f"{cpu:.0f}%" if cpu is not None else "—", inline=True)
+        e.add_field(name="💾 RAM", value=(f"{usada/total*100:.0f}% ({usada:.0f}/{total:.0f} MB)"
+                                          if usada is not None and total else "—"), inline=True)
+        e.add_field(name="🌡️ Temp", value=f"{temp:.0f} °C" if temp is not None else "—", inline=True)
+        e.add_field(name="🗄️ Disco", value=disco, inline=True)
+        e.add_field(name="🧩 Módulos", value=str(len(self.bot.cogs)), inline=True)
+        e.add_field(name="🌐 Servidores", value=str(len(self.bot.guilds)), inline=True)
+        e.set_footer(text=f"Python {platform.python_version()} · discord.py {discord.__version__}")
+        try:
+            await canal.send(embed=e)
+        except discord.HTTPException:
+            pass
 
     @app_commands.command(name="bot", description="Estado del bot: versión, uptime, latencia y host")
     async def estado_bot(self, interaction: discord.Interaction):
@@ -52,7 +88,7 @@ class BotInfo(commands.Cog):
         e.add_field(name="🟢 Estado", value="En línea", inline=True)
         e.add_field(name="📡 Latencia", value=f"{self.bot.latency * 1000:.0f} ms", inline=True)
         e.add_field(name="⏱️ Uptime", value=uptime, inline=True)
-        e.add_field(name="🏷️ Versión", value=_version_git(), inline=False)
+        e.add_field(name="🏷️ Versión", value=f"**v{config.BOT_VERSION}** · {_version_git()}", inline=False)
         e.add_field(name="🧩 Módulos", value=str(len(self.bot.cogs)), inline=True)
         e.add_field(name="⌨️ Comandos", value=str(n_cmds), inline=True)
         e.add_field(name="🌐 Servidores", value=str(len(self.bot.guilds)), inline=True)

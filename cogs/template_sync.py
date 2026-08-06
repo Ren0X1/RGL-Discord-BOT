@@ -55,27 +55,8 @@ class TemplateSync(commands.Cog):
                 try:
                     await tpl.sync()
                     log.info("Plantilla '%s' (%s) sincronizada en %s", tpl.name, tpl.code, g.name)
-                    await self._avisar(tpl)
                 except discord.HTTPException as exc:
                     log.warning("No pude sincronizar la plantilla %s: %s", tpl.code, exc)
-
-    async def _avisar(self, tpl):
-        if not config.LOG_CHANNEL_ID:
-            return
-        ch = self.bot.get_channel(config.LOG_CHANNEL_ID)
-        if ch is None:
-            return
-        e = discord.Embed(
-            title="🔄 Plantilla sincronizada",
-            description=f"La plantilla **{tpl.name}** se ha actualizado con los últimos cambios del servidor.",
-            color=0x5865F2,
-            timestamp=datetime.datetime.now(datetime.timezone.utc),
-        )
-        e.set_footer(text=f"Código: {tpl.code}")
-        try:
-            await ch.send(embed=e)
-        except discord.HTTPException:
-            pass
 
     @revisar.before_loop
     async def _antes(self):

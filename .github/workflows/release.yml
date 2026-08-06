@@ -1,0 +1,108 @@
+name: 📦 Auto Release
+
+# Cada push a main: el workflow lee el/los commit(s), decide el tipo de cambio
+# (major / feature / minor / fix) y calcula la nueva versión MAJOR.FEATURE.MINOR.fFIX
+# (ej. 1.2.3.f1). Después ACTUALIZA VERSION, CREA LA TAG y PUBLICA LA RELEASE con el ZIP.
+# Todo automático: no hay que crear tags ni releases a mano.
+#
+# Detección por el mensaje del commit (prioridad de arriba a abajo):
+#   MAJOR   -> "major:", "!:", o "BREAKING CHANGE"     (resetea feature/minor/fix)
+#   FEATURE -> "feat:" / "feature:"                     (resetea minor/fix)
+#   FIX     -> "fix:" / "hotfix:" / "bugfix:"           (sube solo .fN)
+#   MINOR   -> cualquier otra cosa (refactor, chore…)   (resetea fix)
+#
+# La PRIMERA vez (sin tags) publica la versión del fichero VERSION tal cual (baseline).
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    if: ${{ !startsWith(github.event.head_commit.message, 'chore(release)') }}
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🧮 Calcular versión
+        id: ver
+        run: |
+          LAST_TAG="$(git tag --list 'v*' --sort=-creatordate | head -1)"
+
+          if [ -z "$LAST_TAG" ]; then
+            # Primera release: usar el fichero VERSION tal cual, sin bump
+            NEW="$(cat VERSION 2>/dev/null || echo '0.0.0.f0')"
+            TIPO=baseline
+            echo "::notice::Primera release (baseline): v$NEW"
+          else
+            CUR="${LAST_TAG#v}"
+            MAJOR=$(echo "$CUR"   | cut -d. -f1)
+            FEATURE=$(echo "$CUR" | cut -d. -f2)
+            MINOR=$(echo "$CUR"   | cut -d. -f3)
+            FIX=$(echo "$CUR"     | cut -d. -f4 | tr -d 'f')
+            MAJOR=${MAJOR:-0}; FEATURE=${FEATURE:-0}; MINOR=${MINOR:-0}; FIX=${FIX:-0}
+
+            RANGE="${{ github.event.before }}..${{ github.event.after }}"
+            MSG="$(git log --format='%s%n%b' "$RANGE" 2>/dev/null)"
+            [ -z "$MSG" ] && MSG="$(git log -1 --format='%s%n%b')"
+            L="$(echo "$MSG" | tr '[:upper:]' '[:lower:]')"
+
+            if echo "$L" | grep -qE 'breaking change|(^|[^a-z])major(:|!)|!:'; then
+              TIPO=major;   MAJOR=$((MAJOR+1)); FEATURE=0; MINOR=0; FIX=0
+            elif echo "$L" | grep -qE '(^|[^a-z])feat(ure)?(\(|:|s )'; then
+              TIPO=feature; FEATURE=$((FEATURE+1)); MINOR=0; FIX=0
+            elif echo "$L" | grep -qE '(^|[^a-z])(fix|hotfix|bugfix)(\(|:)'; then
+              TIPO=fix;     FIX=$((FIX+1))
+            else
+              TIPO=minor;   MINOR=$((MINOR+1)); FIX=0
+            fi
+            NEW="${MAJOR}.${FEATURE}.${MINOR}.f${FIX}"
+            echo "::notice::Cambio '$TIPO': v$CUR -> v$NEW"
+          fi
+
+          echo "tipo=$TIPO" >> "$GITHUB_OUTPUT"
+          echo "new=$NEW"   >> "$GITHUB_OUTPUT"
+
+      - name: 🔢 Actualizar VERSION
+        run: |
+          echo -n "${{ steps.ver.outputs.new }}" > VERSION
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add VERSION
+          git commit -m "chore(release): v${{ steps.ver.outputs.new }} [skip ci]" && git push || echo "VERSION ya estaba al día"
+
+      - name: 📝 Notas de la release
+        run: |
+          VER="${{ steps.ver.outputs.new }}"
+          awk -v v="$VER" '$0 ~ "^## \\[" v "\\]" {flag=1; next} /^## \[/ {if(flag) exit} flag {print}' CHANGELOG.md > NOTAS.md
+          if [ ! -s NOTAS.md ]; then
+            RANGE="${{ github.event.before }}..${{ github.event.after }}"
+            {
+              echo "### Cambios (v$VER · ${{ steps.ver.outputs.tipo }})"
+              git log --pretty='- %s' "$RANGE" 2>/dev/null || git log -1 --pretty='- %s'
+            } > NOTAS.md
+          fi
+
+      - name: 📦 Empaquetar ZIP
+        run: |
+          NAME="RGL-Discord-BOT-v${{ steps.ver.outputs.new }}.zip"
+          zip -rq "$NAME" . \
+            -x ".git/*" ".github/*" "*.env" "data/*" "*/data/*" \
+               "ai_context.json" "ai_saved.json" "ai_state.json" \
+               "*__pycache__*" "*.pyc" "NOTAS.md"
+          echo "ZIP=$NAME" >> "$GITHUB_ENV"
+
+      - name: 🚀 Crear tag + Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.new }}
+          name: RGL Discord BOT v${{ steps.ver.outputs.new }}
+          target_commitish: main
+          body_path: NOTAS.md
+          files: ${{ env.ZIP }}
