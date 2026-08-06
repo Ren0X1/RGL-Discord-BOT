@@ -417,6 +417,7 @@ class AIChat(commands.Cog):
             self._contador[gid] = self._contador.get(gid, 0) + 1
             if self._contador[gid] >= APRENDER_CADA and not self._aprendiendo:
                 self._contador[gid] = 0
+                log.info("Lanzando captura de memoria (cada %d mensajes)", APRENDER_CADA)
                 asyncio.create_task(self._aprender_seguro(message))
 
         directo = self._es_directo(message)
@@ -552,6 +553,7 @@ class AIChat(commands.Cog):
             quien = "BOT" if (self.bot.user and m.author.id == self.bot.user.id) else m.author.display_name
             lineas.append(f"{quien}: {c[:300]}")
         if len(lineas) < 2:
+            log.info("Captura cancelada: solo %d mensajes con texto", len(lineas))
             return
 
         vistos, orden = set(), []
@@ -582,17 +584,26 @@ class AIChat(commands.Cog):
         data = await self._api([{"role": "system", "content": sys},
                                 {"role": "user", "content": "CONVERSACIÓN:\n" + "\n".join(lineas)}])
         if not data:
+            log.warning("Captura: la API no devolvió nada")
             return
         try:
             txt = (data["choices"][0]["message"].get("content") or "").strip()
         except (KeyError, IndexError, TypeError):
+            log.warning("Captura: respuesta de la API con formato raro: %s", str(data)[:200])
             return
         txt = txt.replace("```json", "").replace("```", "").strip()
+        # el modelo a veces mete texto alrededor del JSON: nos quedamos con el bloque
+        if not txt.startswith("{"):
+            ini, fin = txt.find("{"), txt.rfind("}")
+            if ini != -1 and fin > ini:
+                txt = txt[ini:fin + 1]
         try:
             obj = json.loads(txt)
         except ValueError:
+            log.warning("Captura: el modelo no devolvió JSON válido: %s", txt[:200])
             return
         if not isinstance(obj, dict):
+            log.warning("Captura: JSON inesperado (%s)", type(obj).__name__)
             return
 
         cambios = False
@@ -633,10 +644,14 @@ class AIChat(commands.Cog):
 
         s["datos"] = _podar(s["datos"])
         s["estilo"] = _podar(s["estilo"])
-        if cambios:
-            self._save(SAVED_PATH, d)
-            if etiquetas:
-                self._etiquetar_contexto(gid, etiquetas)
+        # guardamos siempre: así el fichero existe desde la primera captura, aunque
+        # esta vez el modelo no haya encontrado nada nuevo que apuntar
+        self._save(SAVED_PATH, d)
+        if etiquetas:
+            self._etiquetar_contexto(gid, etiquetas)
+        log.info("Captura completada: %s (%d personas en memoria)",
+                 "con datos nuevos" if cambios else "sin datos nuevos", len(s["usuarios"]))
+        return cambios
 
     # ---------- consolidación diaria (fusiona duplicados/parecidos) ----------
     @tasks.loop(time=dtime(hour=5, tzinfo=_TZ))
@@ -770,6 +785,50 @@ class AIChat(commands.Cog):
         msg = "\n".join(lineas) if lineas else "No hay contextos ni memoria en este servidor."
         await interaction.response.send_message(msg[:1900], ephemeral=True)
 
+
+    @app_commands.command(name="ia_aprender",
+                          description="Fuerza ahora una captura de memoria y dice qué ha pasado")
+    async def ia_aprender(self, interaction: discord.Interaction):
+        if not self._es_admin(interaction):
+            await interaction.response.send_message("Necesitas **Gestionar servidor**.", ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        if not config.AI_API_KEY:
+            await interaction.followup.send("⚠️ Falta `AI_API_KEY` en el `.env`.")
+            return
+        canal = self.bot.get_channel(config.AI_CHANNEL_ID) if config.AI_CHANNEL_ID else None
+        if canal is None:
+            await interaction.followup.send(
+                f"⚠️ No encuentro el canal de IA (`AI_CHANNEL_ID={config.AI_CHANNEL_ID}`).")
+            return
+        historial = []
+        async for m in canal.history(limit=config.AI_HISTORY or 20):
+            historial.append(m)
+        historial.reverse()
+        participantes, vistos = [], set()
+        for m in historial:
+            if m.author.bot or m.author.id in vistos:
+                continue
+            vistos.add(m.author.id)
+            participantes.append((m.author.id, m.author.display_name))
+        if not participantes:
+            await interaction.followup.send(
+                f"⚠️ No hay mensajes de personas en {canal.mention} para aprender.")
+            return
+        try:
+            cambios = await self._capturar(interaction.guild.id, historial, participantes)
+        except Exception as exc:
+            log.warning("Fallo en /ia_aprender: %s", exc)
+            await interaction.followup.send(f"⚠️ La captura ha fallado: `{exc}`")
+            return
+        existe = os.path.exists(SAVED_PATH)
+        s = self._find_server(self._saved_load(), interaction.guild.id) or {}
+        total = sum(len(u.get("datos", [])) for u in s.get("usuarios", [])) + len(s.get("datos", []))
+        await interaction.followup.send(
+            f"{'✅ Datos nuevos guardados.' if cambios else 'ℹ️ Sin datos nuevos esta vez.'}\n"
+            f"Fichero `data/ai_saved.json`: {'existe' if existe else '**NO existe**'}\n"
+            f"Mensajes analizados: {len(historial)} · personas: {len(participantes)} · "
+            f"datos en memoria: {total}")
 
     @app_commands.command(name="ia_memoria", description="Ver lo que la IA ha aprendido de alguien (numerado)")
     @app_commands.describe(usuario="Usuario (vacío = memoria del servidor)")
