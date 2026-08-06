@@ -10,6 +10,12 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
 ---
 
+## [0.23.0.f0] - 2026-08-06 · ✨ feature
+### 🧠 Mejorado
+- **Memoria de la IA mucho más lista**: aprende cada 5 mensajes (aunque no responda), de forma **aditiva** (ya no se pisa lo aprendido), mapea a la gente **por número** (no se pierden datos), **refuerza** lo que se repite (`veces`) y **consolida a diario** fusionando duplicados. Migra sola el formato antiguo.
+### 🔧 Cambiado
+- 🗂️ Los ficheros de la IA (`ai_context.json`, `ai_saved.json`, `ai_state.json`) se guardan ahora en **`data/`** para dejar la raíz más limpia.
+
 ## [0.22.0.f0] - 2026-06-20 · ✨ feature
 ### ✨ Añadido
 - 🩺 **Resumen del sistema al arrancar**: publica en el log CPU, RAM, temperatura, disco y versión al iniciarse.

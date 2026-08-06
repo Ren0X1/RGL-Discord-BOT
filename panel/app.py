@@ -33,9 +33,9 @@ from waitress import serve
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 BOT_DIR = os.path.dirname(BASE_DIR)            # /home/renox/discord-bot
 ENV_PATH = os.path.join(BOT_DIR, ".env")
-AI_CONTEXT_PATH = os.path.join(BOT_DIR, "ai_context.json")
-AI_SAVED_PATH = os.path.join(BOT_DIR, "ai_saved.json")
-AI_STATE_PATH = os.path.join(BOT_DIR, "ai_state.json")
+AI_CONTEXT_PATH = os.path.join(BOT_DIR, "data", "ai_context.json")
+AI_SAVED_PATH = os.path.join(BOT_DIR, "data", "ai_saved.json")
+AI_STATE_PATH = os.path.join(BOT_DIR, "data", "ai_state.json")
 load_dotenv(ENV_PATH)
 
 # Claves que NO se muestran en el editor (se enmascaran)
@@ -362,6 +362,7 @@ def ia_editor():
             return redirect(url_for("ia_editor"))
         accion = request.form.get("accion")
         try:
+            os.makedirs(os.path.join(BOT_DIR, "data"), exist_ok=True)
             if accion == "estado":
                 enabled = request.form.get("enabled") == "on"
                 with open(AI_STATE_PATH, "w", encoding="utf-8") as f:

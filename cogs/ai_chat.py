@@ -46,10 +46,11 @@ except Exception:
     _TZ = timezone.utc
 
 _RAIZ = os.path.dirname(os.path.dirname(__file__))
-CONTEXT_PATH = os.path.join(_RAIZ, "ai_context.json")
-SAVED_PATH = os.path.join(_RAIZ, "ai_saved.json")
+_DATA = os.path.join(_RAIZ, "data")
+CONTEXT_PATH = os.path.join(_DATA, "ai_context.json")
+SAVED_PATH = os.path.join(_DATA, "ai_saved.json")
 README_PATH = os.path.join(_RAIZ, "README.md")
-STATE_PATH = os.path.join(_RAIZ, "ai_state.json")
+STATE_PATH = os.path.join(_DATA, "ai_state.json")
 MAX_DATOS = 18            # tope duro de datos por persona/servidor
 OBJETIVO_DATOS = 10       # a cuántos comprime la consolidación
 UMBRAL_CONSOLIDA = 14     # a partir de aquí, la tarea diaria fusiona
@@ -173,6 +174,7 @@ class AIChat(commands.Cog):
         return {"servidores": []}
 
     def _save(self, path, d):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             json.dump(d, f, ensure_ascii=False, indent=2)
 
