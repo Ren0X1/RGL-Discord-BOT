@@ -16,6 +16,7 @@ name: 📦 Auto Release
 on:
   push:
     branches: [main]
+  workflow_dispatch:        # botón "Run workflow" en la pestaña Actions
 
 permissions:
   contents: write
@@ -48,8 +49,10 @@ jobs:
             FIX=$(echo "$CUR"     | cut -d. -f4 | tr -d 'f')
             MAJOR=${MAJOR:-0}; FEATURE=${FEATURE:-0}; MINOR=${MINOR:-0}; FIX=${FIX:-0}
 
-            RANGE="${{ github.event.before }}..${{ github.event.after }}"
-            MSG="$(git log --format='%s%n%b' "$RANGE" 2>/dev/null)"
+            BEFORE="${{ github.event.before }}"
+            if [ -n "$BEFORE" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+              MSG="$(git log --format='%s%n%b' "$BEFORE..HEAD" 2>/dev/null)"
+            fi
             [ -z "$MSG" ] && MSG="$(git log -1 --format='%s%n%b')"
             L="$(echo "$MSG" | tr '[:upper:]' '[:lower:]')"
 
@@ -82,10 +85,14 @@ jobs:
           VER="${{ steps.ver.outputs.new }}"
           awk -v v="$VER" '$0 ~ "^## \\[" v "\\]" {flag=1; next} /^## \[/ {if(flag) exit} flag {print}' CHANGELOG.md > NOTAS.md
           if [ ! -s NOTAS.md ]; then
-            RANGE="${{ github.event.before }}..${{ github.event.after }}"
+            BEFORE="${{ github.event.before }}"
             {
               echo "### Cambios (v$VER · ${{ steps.ver.outputs.tipo }})"
-              git log --pretty='- %s' "$RANGE" 2>/dev/null || git log -1 --pretty='- %s'
+              if [ -n "$BEFORE" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+                git log --pretty='- %s' "$BEFORE..HEAD"
+              else
+                git log -1 --pretty='- %s'
+              fi
             } > NOTAS.md
           fi
 
