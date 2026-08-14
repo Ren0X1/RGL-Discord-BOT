@@ -86,9 +86,13 @@ echo  - Si sale "Google no ha verificado esta aplicacion":
 echo      Configuracion avanzada - Ir a la app
 echo.
 if not exist "data\gdrive_token.json" goto :autorizar
-echo  Guardando copia del token anterior...
-copy /y "data\gdrive_token.json" "data\gdrive_token.json.bak" >nul
+echo  Guardando copia del token anterior en TEMP...
+REM  OJO: la copia va a %TEMP%, NUNCA dentro del repo,
+REM  para que no la detecte el escaneo de secretos de GitHub.
+copy /y "data\gdrive_token.json" "%TEMP%\gdrive_token_anterior.json" >nul
 del /q "data\gdrive_token.json"
+REM  limpiamos un .bak antiguo si quedo de versiones previas del script
+if exist "data\gdrive_token.json.bak" del /q "data\gdrive_token.json.bak"
 
 :autorizar
 !PY! "scripts\autorizar_gdrive.py"
@@ -158,9 +162,9 @@ goto :fin_error
 color 0C
 echo.
 echo  ERROR durante la autorizacion.
-if not exist "data\gdrive_token.json.bak" goto :fin_error
+if not exist "%TEMP%\gdrive_token_anterior.json" goto :fin_error
 echo  Restaurando el token anterior...
-copy /y "data\gdrive_token.json.bak" "data\gdrive_token.json" >nul
+copy /y "%TEMP%\gdrive_token_anterior.json" "data\gdrive_token.json" >nul
 goto :fin_error
 
 :sin_scp

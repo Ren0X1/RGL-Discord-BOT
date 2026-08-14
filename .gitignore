@@ -71,7 +71,7 @@ data/cs_links.json
 data/gdrive.json
 data/gdrive_client.json
 data/gdrive_token.json
-
 data/gdrive_token.json.bak
 data/gdrive_*
 data/*.bak
+*.bak
