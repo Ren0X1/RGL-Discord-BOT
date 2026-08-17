@@ -88,6 +88,14 @@ class MiBot(commands.Bot):
             synced = await self.tree.sync()
             log.info("Slash commands sincronizados globalmente (%d). Pueden tardar en propagarse.", len(synced))
 
+    async def on_command_error(self, ctx, error):
+        # Al mencionar al bot ("@bot lo que sea"), discord.py intenta interpretar
+        # el texto como un comando de prefijo y llena el log de CommandNotFound.
+        # Esas menciones las gestiona el módulo de IA, así que las ignoramos.
+        if isinstance(error, commands.CommandNotFound):
+            return
+        log.warning("Error en comando de prefijo: %s", error)
+
     async def on_ready(self):
         log.info("Conectado como %s (ID %s)", self.user, self.user.id)
         log.info("En %d servidor(es)", len(self.guilds))

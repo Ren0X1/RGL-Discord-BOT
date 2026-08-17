@@ -152,6 +152,7 @@ class AIChat(commands.Cog):
         self._readme = None
         self._etiquetado = False
         self._contador = {}        # gid -> mensajes desde el último aprendizaje
+        self._modelo_avisado = False   # para no repetir el aviso de modelo caído
         self._aprendiendo = False
         if config.AI_SUMMARY_CHANNEL_ID and config.AI_API_KEY:
             self.resumen_diario.start()
@@ -732,9 +733,31 @@ class AIChat(commands.Cog):
         async with aiohttp.ClientSession(timeout=timeout) as s:
             async with s.post(f"{config.AI_API_BASE}/chat/completions", json=payload, headers=headers) as r:
                 if r.status != 200:
-                    log.warning("La API de IA respondió %s: %s", r.status, (await r.text())[:200])
+                    cuerpo = (await r.text())[:300]
+                    log.warning("La API de IA respondió %s: %s", r.status, cuerpo)
+                    # el modelo ya no existe / sin acceso: avisar al owner UNA vez
+                    if r.status in (400, 404) and ("model_not_found" in cuerpo
+                                                   or "decommissioned" in cuerpo
+                                                   or "does not exist" in cuerpo):
+                        await self._avisar_modelo_caido(cuerpo)
                     return None
                 return await r.json()
+
+    async def _avisar_modelo_caido(self, detalle):
+        if self._modelo_avisado or not config.OWNER_USER_ID:
+            return
+        self._modelo_avisado = True
+        texto = (f"⚠️ **El modelo de IA `{config.AI_MODEL}` ya no está disponible.**\n"
+                 "La charla con IA está caída hasta que lo cambies.\n\n"
+                 "Pon otro modelo en `AI_MODEL` del `.env` y reinicia el bot. "
+                 "Mira los disponibles en https://console.groq.com/docs/models\n"
+                 f"```{detalle[:300]}```")
+        try:
+            owner = self.bot.get_user(config.OWNER_USER_ID) or await self.bot.fetch_user(config.OWNER_USER_ID)
+            if owner:
+                await owner.send(embed=discord.Embed(description=texto, color=0xff4d4d))
+        except discord.HTTPException:
+            pass
 
     # ---------- comandos (solo staff) ----------
     def _es_admin(self, interaction):

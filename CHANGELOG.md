@@ -10,6 +10,11 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
 ---
 
+## [0.27.0.f2] - 2026-08-17 · 🛠️ fix
+### 🛠️ Corregido
+- 🤖 **Modelo de IA actualizado**: Groq apagó `llama-3.3-70b-versatile` el 16/08/2026; ahora se usa `openai/gpt-oss-120b`. Además, si el modelo vuelve a caducar el bot avisa por DM al owner en vez de fallar en silencio.
+- 🔇 Silenciados los `CommandNotFound` que llenaban el log al mencionar al bot.
+
 ## [0.26.0.f0] - 2026-08-06 · ✨ feature
 ### ✨ Añadido
 - 💾 **Backups a Google Drive**: comprime `data/` cada X horas, lo sube a tu Drive (cuenta de servicio), rota los antiguos y avisa por DM. Comandos `/backup` y `/backups`.
