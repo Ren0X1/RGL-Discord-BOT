@@ -55,6 +55,7 @@ MAX_DATOS = 18            # tope duro de datos por persona/servidor
 OBJETIVO_DATOS = 10       # a cuántos comprime la consolidación
 UMBRAL_CONSOLIDA = 14     # a partir de aquí, la tarea diaria fusiona
 APRENDER_CADA = 5         # cada cuántos mensajes captura contexto (aunque no responda)
+MIN_TOKENS_RAZONADOR = 1500   # presupuesto mínimo para modelos que "razonan" antes de responder
 README_MAX = 6000
 LIMITE_DISCORD = 1990
 
@@ -88,6 +89,12 @@ def _dividir(texto):
         if linea:
             salida.extend(_trocear(linea))
     return salida[:5]   # tope de seguridad: máximo 5 mensajes seguidos
+
+
+def _es_razonador(modelo):
+    """Modelos que consumen tokens razonando antes de escribir la respuesta."""
+    m = (modelo or "").lower()
+    return "gpt-oss" in m or "qwen3" in m or "o1" in m or "deepseek-r1" in m or "reason" in m
 
 
 def _hoy():
@@ -528,10 +535,16 @@ class AIChat(commands.Cog):
         if not data:
             return None
         try:
-            texto = (data["choices"][0]["message"].get("content") or "").strip()
+            msg = data["choices"][0]["message"]
+            texto = (msg.get("content") or "").strip()
         except (KeyError, IndexError, TypeError):
             return None
+        # los modelos de razonamiento a veces cuelan tokens de control
+        texto = re.sub(r"<\|[a-z_]+\|>", "", texto).strip()
         if not texto:
+            fin = (data.get("choices") or [{}])[0].get("finish_reason")
+            log.warning("La IA devolvió una respuesta vacía (finish_reason=%s). "
+                        "Si es un modelo de razonamiento, sube AI_MAX_TOKENS.", fin)
             return None
         m = re.match(r"^\s*([^\n:]{1,32}):\s*(.+)$", texto, re.S)
         if m:
@@ -727,8 +740,21 @@ class AIChat(commands.Cog):
     # ---------- API ----------
     async def _api(self, mensajes):
         headers = {"Authorization": f"Bearer {config.AI_API_KEY}", "Content-Type": "application/json"}
-        payload = {"model": config.AI_MODEL, "messages": mensajes,
-                   "max_tokens": config.AI_MAX_TOKENS, "temperature": 1.0}
+        modelo = config.AI_MODEL or ""
+        payload = {"model": modelo, "messages": mensajes, "temperature": 1.0}
+
+        if _es_razonador(modelo):
+            # Los modelos de razonamiento (gpt-oss, qwen3...) gastan tokens "pensando"
+            # ANTES de escribir la respuesta. Con un presupuesto corto se quedaban sin
+            # tokens y devolvían content vacío (el bot no respondía). Por eso:
+            #  - reasoning_effort bajo: piensan poco, que esto es cachondeo, no álgebra
+            #  - reasoning_format hidden: no queremos ver su chapa, solo la respuesta
+            #  - presupuesto ampliado: el razonamiento no se come la respuesta
+            payload["reasoning_effort"] = "low"
+            payload["reasoning_format"] = "hidden"
+            payload["max_completion_tokens"] = max(config.AI_MAX_TOKENS, MIN_TOKENS_RAZONADOR)
+        else:
+            payload["max_tokens"] = config.AI_MAX_TOKENS
         timeout = aiohttp.ClientTimeout(total=25)
         async with aiohttp.ClientSession(timeout=timeout) as s:
             async with s.post(f"{config.AI_API_BASE}/chat/completions", json=payload, headers=headers) as r:

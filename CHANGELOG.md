@@ -10,6 +10,10 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
 ---
 
+## [0.27.0.f3] - 2026-08-17 · 🛠️ fix
+### 🛠️ Corregido
+- 🤫 **El bot no respondía con el modelo nuevo**: `gpt-oss-120b` es un modelo de razonamiento y se gastaba todos los tokens 'pensando', devolviendo respuestas vacías. Ahora se le manda `reasoning_effort=low`, `reasoning_format=hidden` y un presupuesto de tokens suficiente. También se limpian los tokens de control y se avisa en el log si llega una respuesta vacía.
+
 ## [0.27.0.f2] - 2026-08-17 · 🛠️ fix
 ### 🛠️ Corregido
 - 🤖 **Modelo de IA actualizado**: Groq apagó `llama-3.3-70b-versatile` el 16/08/2026; ahora se usa `openai/gpt-oss-120b`. Además, si el modelo vuelve a caducar el bot avisa por DM al owner en vez de fallar en silencio.

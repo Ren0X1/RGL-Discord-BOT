@@ -135,7 +135,7 @@ AI_CHANCE = min(1.0, max(0.0, _float("AI_CHANCE", 0.25)))   # 0.25 = 1 de cada 4
 AI_API_BASE = os.getenv("AI_API_BASE", "https://api.groq.com/openai/v1").rstrip("/")
 AI_API_KEY = os.getenv("AI_API_KEY", "")
 AI_MODEL = os.getenv("AI_MODEL", "openai/gpt-oss-120b")
-AI_MAX_TOKENS = _int("AI_MAX_TOKENS", 150)
+AI_MAX_TOKENS = _int("AI_MAX_TOKENS", 1500)   # los modelos que razonan necesitan margen (ver MIN_TOKENS_RAZONADOR)
 AI_COOLDOWN = _int("AI_COOLDOWN", 6)   # segundos mínimos entre respuestas (respeta el límite de la API)
 AI_HISTORY = max(0, _int("AI_HISTORY", 20))   # nº de mensajes recientes que se pasan como contexto
 AI_MEMORY = _bool("AI_MEMORY", True)   # que la IA guarde sola datos relevantes en ai_saved.json
