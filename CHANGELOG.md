@@ -10,6 +10,11 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
 ---
 
+## [0.27.0.f4] - 2026-08-27 · 🛠️ fix
+### 🛠️ Corregido
+- 📦 **Dependencias al día**: `requirements.txt` fija ahora los mínimos en las últimas versiones publicadas (discord.py 2.7.1, Flask 3.1.3, waitress 3.0.2, python-dotenv 1.2.3, tzdata 2026.3, google-api-python-client 2.199.0, google-auth 2.57.0, google-auth-oauthlib 1.4.1) y declara `aiohttp` y `Werkzeug`, que los cogs y el panel ya importaban directamente sin listarlos.
+- 🧹 **`.gitignore`**: se ignora la carpeta `.claude/` (sesiones y ajustes locales de Claude Code).
+
 ## [0.27.0.f3] - 2026-08-17 · 🛠️ fix
 ### 🛠️ Corregido
 - 🤫 **El bot no respondía con el modelo nuevo**: `gpt-oss-120b` es un modelo de razonamiento y se gastaba todos los tokens 'pensando', devolviendo respuestas vacías. Ahora se le manda `reasoning_effort=low`, `reasoning_format=hidden` y un presupuesto de tokens suficiente. También se limpian los tokens de control y se avisa en el log si llega una respuesta vacía.

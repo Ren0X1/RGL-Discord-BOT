@@ -75,3 +75,6 @@ data/gdrive_token.json.bak
 data/gdrive_*
 data/*.bak
 *.bak
+
+# Claude Code (sesiones y ajustes locales)
+.claude/
