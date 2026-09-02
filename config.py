@@ -191,9 +191,12 @@ AUTOMOD_TIMEOUT_SECONDS = _int("AUTOMOD_TIMEOUT_SECONDS", 300)  # aislar al spam
 AUTOMOD_EXEMPT_ROLES = _ids("AUTOMOD_EXEMPT_ROLES")      # roles que se libran del automod
 AUTOMOD_LOG_CHANNEL_ID = _int("AUTOMOD_LOG_CHANNEL_ID")  # vacío = usa LOG_CHANNEL_ID
 
-# --- 22) Estadísticas de Counter-Strike (Leetify + csstats.gg) ---
+# --- 22) Estadísticas de juegos: Counter-Strike (Leetify) y Rust (Steam) ---
 LEETIFY_API_KEY = os.getenv("LEETIFY_API_KEY", "")   # opcional: más límite (leetify.com/app/developer)
-STEAM_API_KEY = os.getenv("STEAM_API_KEY", "")       # necesario solo para URLs /id/<nombre> (vanity)
+# Clave de la Steam Web API (steamcommunity.com/dev/apikey). La comparten /cs y /rust:
+#   - /rust la NECESITA (sus stats salen enteras de Steam).
+#   - /cs la usa para las URLs /id/<nombre> (vanity) y para el avatar del jugador.
+STEAM_API_KEY = os.getenv("STEAM_API_KEY", "")
 
 # --- Versión del bot (fichero VERSION en la raíz; lo actualiza el workflow de release) ---
 _DIR_CFG = os.path.dirname(os.path.abspath(__file__))

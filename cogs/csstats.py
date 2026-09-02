@@ -1,22 +1,22 @@
 """
 Módulo 23 — Estadísticas de Counter-Strike.
 
-/cs <url_perfil_steam>  -> saca stats del jugador usando la API pública de Leetify
-(https://api-public.cs-prod.leetify.com, GET /v3/profile?steam64_id=...) y añade
-enlaces a su perfil de Leetify y de csstats.gg.
+/cs [usuario|url]     -> stats del jugador (API pública de Leetify)
+/cs_vincular <url>    -> vincula tu cuenta de Steam
+/cs_desvincular       -> la quita
+/cs_comparar          -> compara hasta 4 perfiles
 
-Acepta la URL de Steam en cualquiera de estas formas:
-  - https://steamcommunity.com/profiles/7656119XXXXXXXXXX
-  - https://steamcommunity.com/id/<nombre>     (requiere STEAM_API_KEY para resolverlo)
-  - directamente el SteamID64 (17 dígitos)
+Datos de https://api-public.cs-prod.leetify.com (GET /v3/profile?steam64_id=...),
+que publica rangos (Premier, FACEIT, Wingman, Renown, competitivo por mapa),
+el Leetify rating, 21 métricas de juego y las últimas 100 partidas.
 
-LEETIFY_API_KEY es opcional (más límite). STEAM_API_KEY solo hace falta para las
-URLs con nombre personalizado (/id/...).
+La resolución de perfiles y la vinculación viven en cogs/steamutil.py y se
+comparten con /rust: se vincula el Steam una vez para los dos juegos.
+
+LEETIFY_API_KEY es opcional (más límite). STEAM_API_KEY se usa para las URLs
+con nombre personalizado (/id/...) y para sacar el avatar del jugador.
 """
 
-import os
-import re
-import json
 import logging
 
 import aiohttp
@@ -25,16 +25,13 @@ from discord import app_commands
 from discord.ext import commands
 
 import config
+from cogs import steamutil as su
 
 log = logging.getLogger("csstats")
 
 LEETIFY_BASE = "https://api-public.cs-prod.leetify.com"
-LINKS_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "cs_links.json")
-_MENCION_RE = re.compile(r"^<@!?(\d+)>$")
-_STEAM64_RE = re.compile(r"(7656\d{13})")
-_VANITY_RE = re.compile(r"steamcommunity\.com/id/([^/?#\s]+)", re.I)
 
-# Rangos clásicos de CS (Competitivo y Wingman usan esta escala 1-18)
+# Rangos clásicos de CS (competitivo y wingman usan esta escala 1-18)
 _RANGOS_CS = {
     1: "Silver I", 2: "Silver II", 3: "Silver III", 4: "Silver IV",
     5: "Silver Elite", 6: "Silver Elite Master", 7: "Gold Nova I",
@@ -45,58 +42,53 @@ _RANGOS_CS = {
     18: "The Global Elite",
 }
 
+# De dónde viene cada partida
+_FUENTES = {"faceit": "FACEIT", "matchmaking": "Premier", "premier": "Premier",
+            "esea": "ESEA", "esportal": "Esportal", "renown": "Renown"}
+
+_CUADROS = {"win": "🟩", "won": "🟩", "loss": "🟥", "lose": "🟥", "lost": "🟥",
+            "tie": "🟨", "draw": "🟨"}
+
 
 def _rango_cs(n):
-    if n is None:
-        return None
-    return _RANGOS_CS.get(n, f"rango {n}")
+    return None if n is None else _RANGOS_CS.get(n, f"rango {n}")
 
 
-_RESULTADO = {"win": "✅", "won": "✅", "loss": "❌", "lose": "❌", "lost": "❌",
-              "tie": "🟰", "draw": "🟰"}
+def _cuadro(outcome):
+    return _CUADROS.get((outcome or "").lower(), "⬜")
 
 
-def _emoji_resultado(o):
-    return _RESULTADO.get((o or "").lower(), "❔")
+def _p(x, dec=1):
+    """Valores que YA vienen en 0-100 (accuracy_head, spray_accuracy...)."""
+    return "—" if x is None else f"{x:.{dec}f}%"
 
 
-def _pct(x):
-    if x is None:
-        return "—"
-    return f"{x * 100:.0f}%" if x <= 1 else f"{x:.0f}%"
-
-
-def _num(x, dec=1, suf=""):
+def _n(x, dec=1, suf=""):
     return "—" if x is None else f"{x:.{dec}f}{suf}"
+
+
+def _r(x, dec=2):
+    """Ratios por ronda (clutch, opening, ct/t_leetify): se enseñan x100 y con signo,
+    que es como los pinta Leetify."""
+    return "—" if x is None else f"{x * 100:+.{dec}f}"
+
+
+def _color(lr):
+    """El color del embed dice de un vistazo cómo va el jugador."""
+    if lr is None:
+        return 0xF84982        # rosa Leetify
+    if lr >= 5:
+        return 0x43B581        # verde
+    if lr >= 1:
+        return 0x3498DB        # azul
+    if lr >= -1:
+        return 0xF84982
+    return 0xE74C3C            # rojo
 
 
 class CSStats(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-
-    async def _resolver_steam64(self, session, url):
-        url = (url or "").strip()
-        v = _VANITY_RE.search(url)
-        if v:
-            vanity = v.group(1)
-            if not config.STEAM_API_KEY:
-                return None, ("Esa URL usa nombre personalizado (`/id/...`). Necesito una `STEAM_API_KEY` "
-                              "para resolverla, o pásame la URL con `/profiles/<número>`.")
-            api = ("https://api.steampowered.com/ISteamUser/ResolveVanityURL/v1/"
-                   f"?key={config.STEAM_API_KEY}&vanityurl={vanity}")
-            try:
-                async with session.get(api) as r:
-                    data = (await r.json()).get("response", {})
-                if data.get("success") == 1 and data.get("steamid"):
-                    return data["steamid"], None
-                return None, "No pude resolver ese nombre de Steam."
-            except Exception as exc:
-                log.warning("Vanity resolve falló: %s", exc)
-                return None, "Error consultando la API de Steam."
-        m = _STEAM64_RE.search(url)
-        if m:
-            return m.group(1), None
-        return None, "No reconozco esa URL de Steam. Pásame el enlace al perfil (`/profiles/...` o `/id/...`)."
 
     async def _leetify(self, session, steam64):
         headers = {"Accept": "application/json", "User-Agent": "RGL-Discord-BOT"}
@@ -110,48 +102,13 @@ class CSStats(commands.Cog):
                 return None, r.status
             return await r.json(), 200
 
-    # ---------- vinculaciones ----------
-    def _links(self):
-        try:
-            with open(LINKS_PATH, encoding="utf-8") as f:
-                d = json.load(f)
-            return d if isinstance(d, dict) else {}
-        except (OSError, ValueError):
-            return {}
-
-    def _guardar_links(self, d):
-        os.makedirs(os.path.dirname(LINKS_PATH), exist_ok=True)
-        with open(LINKS_PATH, "w", encoding="utf-8") as f:
-            json.dump(d, f, ensure_ascii=False, indent=2)
-
-    def _link_de(self, uid):
-        return self._links().get(str(uid))
-
-    async def _resolver_objetivo(self, session, guild, texto):
-        """Devuelve (steam64, etiqueta, error). Acepta mención/ID de Discord (requiere
-        perfil vinculado) o una URL/SteamID64."""
-        texto = (texto or "").strip()
-        m = _MENCION_RE.match(texto)
-        uid = None
-        if m:
-            uid = int(m.group(1))
-        elif texto.isdigit() and len(texto) < 17:
-            uid = int(texto)
-        if uid is not None:
-            sid = self._link_de(uid)
-            miembro = guild.get_member(uid) if guild else None
-            nombre = miembro.display_name if miembro else f"<@{uid}>"
-            if not sid:
-                return None, nombre, (f"**{nombre}** no tiene perfil vinculado. "
-                                      f"Que use `/cs_vincular` con la URL de su Steam.")
-            return sid, nombre, None
-        sid, err = await self._resolver_steam64(session, texto)
-        return sid, texto, err
-
-    @app_commands.command(name="cs_vincular", description="Vincula tu perfil de Steam para usar /cs sin pegar la URL")
+    # --------------------------------------------------------- comandos
+    @app_commands.command(name="cs_vincular",
+                          description="Vincula tu perfil de Steam para usar /cs sin pegar la URL")
     @app_commands.describe(url="URL de tu perfil de Steam (o el SteamID64)",
                            usuario="Solo staff: vincular el perfil de otra persona")
-    async def cs_vincular(self, interaction: discord.Interaction, url: str, usuario: discord.Member = None):
+    async def cs_vincular(self, interaction: discord.Interaction, url: str,
+                          usuario: discord.Member = None):
         await interaction.response.defer(thinking=True, ephemeral=True)
         objetivo = interaction.user
         if usuario and usuario.id != interaction.user.id:
@@ -159,27 +116,65 @@ class CSStats(commands.Cog):
                 await interaction.followup.send("Solo el staff puede vincular a otra persona.")
                 return
             objetivo = usuario
-        timeout = aiohttp.ClientTimeout(total=20)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            steam64, err = await self._resolver_steam64(session, url)
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20)) as session:
+            steam64, err = await su.resolver_steam64(session, url)
         if err:
             await interaction.followup.send(f"⚠️ {err}")
             return
-        d = self._links()
-        d[str(objetivo.id)] = steam64
-        self._guardar_links(d)
+        su.vincular(objetivo.id, steam64)
         await interaction.followup.send(
             f"✅ Perfil vinculado a **{objetivo.display_name}**: `{steam64}`\n"
-            f"Ya puedes usar `/cs` sin parámetros.")
+            f"Ya puedes usar `/cs` sin parámetros — y te vale también para `/rust`.")
 
     @app_commands.command(name="cs_desvincular", description="Elimina tu perfil de Steam vinculado")
     async def cs_desvincular(self, interaction: discord.Interaction):
-        d = self._links()
-        if d.pop(str(interaction.user.id), None) is None:
+        if not su.desvincular(interaction.user.id):
             await interaction.response.send_message("No tenías ningún perfil vinculado.", ephemeral=True)
             return
-        self._guardar_links(d)
-        await interaction.response.send_message("🗑️ Perfil desvinculado.", ephemeral=True)
+        await interaction.response.send_message(
+            "🗑️ Perfil desvinculado (deja de valer también para `/rust`).", ephemeral=True)
+
+    @app_commands.command(name="cs", description="Estadísticas de Counter-Strike de un perfil de Steam (Leetify)")
+    @app_commands.describe(url="URL de Steam o @usuario (vacío = tu perfil vinculado)")
+    async def cs(self, interaction: discord.Interaction, url: str = None):
+        await interaction.response.defer(thinking=True, ephemeral=False)   # visible para todos
+        if not url:
+            url = su.link_de(interaction.user.id)
+            if not url:
+                await interaction.followup.send(
+                    "No tienes perfil vinculado. Usa `/cs_vincular` con la URL de tu Steam, "
+                    "o pásame la URL directamente.")
+                return
+
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=25)) as session:
+            steam64, _etiqueta, err = await su.resolver_objetivo(session, interaction.guild, url)
+            if err:
+                await interaction.followup.send(f"⚠️ {err}")
+                return
+            try:
+                prof, status = await self._leetify(session, steam64)
+            except Exception as exc:
+                log.warning("Leetify falló: %s", exc)
+                await interaction.followup.send("⚠️ No pude conectar con Leetify, prueba más tarde.")
+                return
+            perfil_steam = await su.perfil_steam(session, steam64)
+
+        if status == 404 or not prof:
+            await interaction.followup.send(
+                f"No encuentro stats de ese perfil en Leetify. ¿Tiene cuenta y partidas?\n"
+                f"https://csstats.gg/player/{steam64}")
+            return
+        if status != 200:
+            await interaction.followup.send(f"⚠️ Leetify respondió un error ({status}). Prueba más tarde.")
+            return
+        if prof.get("privacy_mode") and str(prof.get("privacy_mode")).lower() not in ("public", "0", "false"):
+            await interaction.followup.send(
+                f"El perfil de **{prof.get('name') or steam64}** está oculto en Leetify.\n"
+                f"https://csstats.gg/player/{steam64}")
+            return
+
+        await interaction.followup.send(
+            embed=self._embed(prof, steam64, perfil_steam, interaction.guild))
 
     @app_commands.command(name="cs_comparar", description="Compara las stats de CS de varios perfiles o usuarios")
     @app_commands.describe(jugador1="Usuario (@mención, debe estar vinculado) o URL de Steam",
@@ -190,10 +185,9 @@ class CSStats(commands.Cog):
         await interaction.response.defer(thinking=True, ephemeral=False)
         entradas = [x for x in (jugador1, jugador2, jugador3, jugador4) if x]
         perfiles, errores = [], []
-        timeout = aiohttp.ClientTimeout(total=25)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
             for texto in entradas:
-                steam64, etiqueta, err = await self._resolver_objetivo(session, interaction.guild, texto)
+                steam64, etiqueta, err = await su.resolver_objetivo(session, interaction.guild, texto)
                 if err:
                     errores.append(f"⚠️ {err}")
                     continue
@@ -216,6 +210,169 @@ class CSStats(commands.Cog):
             content="\n".join(errores) if errores else None,
             embed=self._embed_comparativa(perfiles))
 
+    # ------------------------------------------------------------ embed
+    def _embed(self, prof, steam64, perfil_steam, guild):
+        nombre = prof.get("name") or (perfil_steam or {}).get("personaname") or "Jugador"
+        ranks = prof.get("ranks") or {}
+        rating = prof.get("rating") or {}
+        stats = prof.get("stats") or {}
+        leetify_url = f"https://leetify.com/app/profile/{steam64}"
+        lr = ranks.get("leetify")
+
+        e = discord.Embed(title=f"📊 {nombre}", url=leetify_url, color=_color(lr))
+        if (perfil_steam or {}).get("avatarfull"):
+            e.set_thumbnail(url=perfil_steam["avatarfull"])
+
+        # --- cabecera: el rating global y el balance ---
+        cabecera = []
+        if lr is not None:
+            cabecera.append(f"⭐ **Leetify rating {lr:+.2f}**")
+        wr, tot = prof.get("winrate"), prof.get("total_matches")
+        if wr is not None:
+            cabecera.append(f"🏆 **{wr * 100:.0f}%** de victorias"
+                            + (f" en {su.miles(tot)} partidas" if tot else ""))
+        if cabecera:
+            e.description = " · ".join(cabecera)
+
+        # --- rangos, uno por línea ---
+        lineas = []
+        if ranks.get("premier") is not None:
+            lineas.append(f"`Premier    ` **{su.miles(ranks['premier'])}** ELO")
+        if ranks.get("faceit") is not None:
+            elo = f" · {su.miles(ranks['faceit_elo'])} ELO" if ranks.get("faceit_elo") else ""
+            lineas.append(f"`FACEIT     ` **Nivel {ranks['faceit']}**{elo}")
+        if ranks.get("renown") is not None:
+            lineas.append(f"`Renown     ` **{su.miles(ranks['renown'])}**")
+        if ranks.get("wingman") is not None:
+            lineas.append(f"`Wingman    ` **{_rango_cs(ranks['wingman'])}**")
+        comp = [c for c in (ranks.get("competitive") or []) if c.get("rank")]
+        if comp:
+            mejor = max(comp, key=lambda c: c.get("rank") or 0)
+            mapa = (mejor.get("map_name") or "").replace("de_", "").replace("cs_", "")
+            lineas.append(f"`Competitivo` **{_rango_cs(mejor.get('rank'))}** ({mapa})")
+        e.add_field(name="🎖️ Rangos", value="\n".join(lineas) or "Sin rangos", inline=False)
+
+        # --- las tres habilidades base, con barra (van de 0 a 100) ---
+        habilidades = [("Puntería", rating.get("aim")), ("Posición", rating.get("positioning")),
+                       ("Utilidad", rating.get("utility"))]
+        barras = [f"`{n:<9}` {su.barra(v)} **{_n(v, 0)}**" for n, v in habilidades if v is not None]
+        if barras:
+            e.add_field(name="⭐ Habilidades", value="\n".join(barras), inline=False)
+
+        # --- impacto por ronda (ratios, se pintan x100 como en Leetify) ---
+        impacto = []
+        if rating.get("clutch") is not None:
+            impacto.append(f"`Clutch  ` **{_r(rating['clutch'])}**")
+        if rating.get("opening") is not None:
+            impacto.append(f"`Apertura` **{_r(rating['opening'])}**")
+        if rating.get("ct_leetify") is not None:
+            impacto.append(f"`Como CT ` **{_r(rating['ct_leetify'])}**")
+        if rating.get("t_leetify") is not None:
+            impacto.append(f"`Como T  ` **{_r(rating['t_leetify'])}**")
+        if impacto:
+            e.add_field(name="💥 Impacto por ronda", value="\n".join(impacto), inline=True)
+
+        # --- mecánica fina ---
+        mecanica = []
+        if stats.get("accuracy_head") is not None:
+            mecanica.append(f"`Headshots  ` **{_p(stats['accuracy_head'])}**")
+        if stats.get("accuracy_enemy_spotted") is not None:
+            mecanica.append(f"`Al avistar ` **{_p(stats['accuracy_enemy_spotted'])}**")
+        if stats.get("spray_accuracy") is not None:
+            mecanica.append(f"`Spray      ` **{_p(stats['spray_accuracy'])}**")
+        if stats.get("counter_strafing_good_shots_ratio") is not None:
+            mecanica.append(f"`Counter-str` **{_p(stats['counter_strafing_good_shots_ratio'])}**")
+        if stats.get("preaim") is not None:
+            mecanica.append(f"`Preaim     ` **{_n(stats['preaim'], 1, '°')}**")
+        if stats.get("reaction_time_ms") is not None:
+            mecanica.append(f"`Reacción   ` **{_n(stats['reaction_time_ms'], 0, ' ms')}**")
+        if mecanica:
+            e.add_field(name="🎯 Mecánica", value="\n".join(mecanica), inline=True)
+
+        # --- duelos de apertura, CT y T por separado ---
+        duelos = []
+        if stats.get("ct_opening_duel_success_percentage") is not None:
+            duelos.append(f"`Gana de CT ` **{_p(stats['ct_opening_duel_success_percentage'], 0)}**")
+        if stats.get("t_opening_duel_success_percentage") is not None:
+            duelos.append(f"`Gana de T  ` **{_p(stats['t_opening_duel_success_percentage'], 0)}**")
+        if stats.get("ct_opening_aggression_success_rate") is not None:
+            duelos.append(f"`Agresión CT` **{_p(stats['ct_opening_aggression_success_rate'], 0)}**")
+        if stats.get("t_opening_aggression_success_rate") is not None:
+            duelos.append(f"`Agresión T ` **{_p(stats['t_opening_aggression_success_rate'], 0)}**")
+        if duelos:
+            e.add_field(name="⚔️ Duelos de apertura", value="\n".join(duelos), inline=True)
+
+        # --- trades: cuánto ayuda y cuánto le vengan ---
+        trades = []
+        if stats.get("trade_kills_success_percentage") is not None:
+            trades.append(f"`Venga bajas` **{_p(stats['trade_kills_success_percentage'], 0)}**")
+        if stats.get("traded_deaths_success_percentage") is not None:
+            trades.append(f"`Le vengan  ` **{_p(stats['traded_deaths_success_percentage'], 0)}**")
+        if stats.get("trade_kill_opportunities_per_round") is not None:
+            trades.append(f"`Ocasiones  ` **{_n(stats['trade_kill_opportunities_per_round'], 2)}**/ronda")
+        if trades:
+            e.add_field(name="🤝 Trades", value="\n".join(trades), inline=True)
+
+        # --- utilidad: flashes y granadas ---
+        util = []
+        if stats.get("flashbang_thrown") is not None:
+            util.append(f"`Flashes    ` **{_n(stats['flashbang_thrown'], 1)}**/partida")
+        if stats.get("flashbang_hit_foe_per_flashbang") is not None:
+            util.append(f"`Ciega rival` **{_n(stats['flashbang_hit_foe_per_flashbang'], 2)}**"
+                        f" ({_n(stats.get('flashbang_hit_foe_avg_duration'), 1, ' s')})")
+        if stats.get("flashbang_hit_friend_per_flashbang") is not None:
+            util.append(f"`Ciega amigo` **{_n(stats['flashbang_hit_friend_per_flashbang'], 2)}**")
+        if stats.get("flashbang_leading_to_kill") is not None:
+            util.append(f"`Flash->baja` **{_p(stats['flashbang_leading_to_kill'], 0)}**")
+        if stats.get("he_foes_damage_avg") is not None:
+            util.append(f"`Daño HE    ` **{_n(stats['he_foes_damage_avg'], 0)}**"
+                        f" (a colegas {_n(stats.get('he_friends_damage_avg'), 0)})")
+        if stats.get("utility_on_death_avg") is not None:
+            util.append(f"`Sin usar   ` **{_n(stats['utility_on_death_avg'], 0)}$** al morir")
+        if util:
+            e.add_field(name="💣 Utilidad", value="\n".join(util), inline=False)
+
+        # --- forma reciente ---
+        recientes = prof.get("recent_matches") or []
+        if recientes:
+            forma = "".join(_cuadro(m.get("outcome")) for m in recientes[:10])
+            ganadas = sum(1 for m in recientes[:10] if (m.get("outcome") or "").lower() in ("win", "won"))
+            lrs = [m.get("leetify_rating") for m in recientes[:10]
+                   if isinstance(m.get("leetify_rating"), (int, float))]
+            media = f" · LR medio {sum(lrs) / len(lrs) * 100:+.2f}" if lrs else ""
+            lineas = [f"{forma}  **{ganadas}-{min(10, len(recientes)) - ganadas}**{media}", ""]
+            for m in recientes[:5]:
+                sc = m.get("score") or []
+                marcador = f"{sc[0]}-{sc[1]}" if len(sc) == 2 else ""
+                lr_m = m.get("leetify_rating")
+                lr_txt = f" · {lr_m * 100:+.2f}" if isinstance(lr_m, (int, float)) else ""
+                mapa = (m.get("map_name") or "?").replace("de_", "").replace("cs_", "")
+                fuente = _FUENTES.get((m.get("data_source") or "").lower(), "")
+                lineas.append(f"{_cuadro(m.get('outcome'))} `{mapa:<10}` `{marcador:>5}`{lr_txt}"
+                              + (f" · {fuente}" if fuente else ""))
+            e.add_field(name="🕹️ Últimas partidas", value="\n".join(lineas), inline=False)
+
+        # --- con quién juega, si están en el server ---
+        companeros = []
+        for t in (prof.get("recent_teammates") or [])[:10]:
+            uid = su.discord_de(t.get("steam64_id"))
+            if uid and guild and guild.get_member(uid):
+                companeros.append(f"<@{uid}> ({t.get('recent_matches_count', 0)})")
+        if companeros:
+            e.add_field(name="👥 Ha jugado con", value=" · ".join(companeros[:6]), inline=False)
+
+        # --- bans ---
+        bans = prof.get("bans") or []
+        if bans:
+            e.add_field(name="🚨 Bans", value=", ".join(str(b.get("platform", "?")) for b in bans), inline=False)
+
+        e.add_field(name="🔗 Enlaces",
+                    value=f"[Leetify]({leetify_url}) · [csstats.gg](https://csstats.gg/player/{steam64}) · "
+                          f"[Steam](https://steamcommunity.com/profiles/{steam64})",
+                    inline=False)
+        e.set_footer(text="Datos de Leetify")
+        return e
+
     def _embed_comparativa(self, perfiles):
         e = discord.Embed(title="⚔️ Comparativa de Counter-Strike", color=0xF84982)
         for prof, steam64 in perfiles:
@@ -223,140 +380,36 @@ class CSStats(commands.Cog):
             rating = prof.get("rating") or {}
             stats = prof.get("stats") or {}
             partes = []
-            if ranks.get("faceit") is not None:
-                elo = f" · {ranks['faceit_elo']} ELO" if ranks.get("faceit_elo") else ""
-                partes.append(f"FACEIT Nivel {ranks['faceit']}{elo}")
+            if ranks.get("leetify") is not None:
+                partes.append(f"⭐ **LR {ranks['leetify']:+.2f}**")
             if ranks.get("premier") is not None:
-                partes.append(f"Premier {ranks['premier']} ELO")
-            comp = ranks.get("competitive") or []
-            if comp:
-                mejor = max(comp, key=lambda c: c.get("rank") or 0)
-                partes.append(f"Competitivo {_rango_cs(mejor.get('rank'))}")
+                partes.append(f"Premier {su.miles(ranks['premier'])}")
+            if ranks.get("faceit") is not None:
+                elo = f" ({su.miles(ranks['faceit_elo'])})" if ranks.get("faceit_elo") else ""
+                partes.append(f"FACEIT {ranks['faceit']}{elo}")
             wr = prof.get("winrate")
             if wr is not None:
-                partes.append(f"Winrate {(wr * 100 if wr <= 1 else wr):.0f}%")
-            partes.append(f"Aim {_num(rating.get('aim'))} · HS {_pct(stats.get('accuracy_head'))} · "
-                          f"Reacción {_num(stats.get('reaction_time_ms'), 0, ' ms')}")
+                partes.append(f"Winrate {wr * 100:.0f}%")
+            cabecera = " · ".join(partes) or "Sin rangos"
+            detalle = (f"`Puntería` {su.barra(rating.get('aim'))} {_n(rating.get('aim'), 0)}\n"
+                       f"`Posición` {su.barra(rating.get('positioning'))} {_n(rating.get('positioning'), 0)}\n"
+                       f"`Utilidad` {su.barra(rating.get('utility'))} {_n(rating.get('utility'), 0)}\n"
+                       f"HS {_p(stats.get('accuracy_head'))} · "
+                       f"Reacción {_n(stats.get('reaction_time_ms'), 0, ' ms')} · "
+                       f"Preaim {_n(stats.get('preaim'), 1, '°')}")
             e.add_field(name=f"🎮 {prof.get('name') or steam64}",
-                        value="\n".join(partes) or "—", inline=False)
-        # veredicto rápido por rating de aim
-        mejores = [(p.get("rating", {}).get("aim"), p.get("name") or s) for p, s in perfiles]
-        mejores = [(v, n) for v, n in mejores if isinstance(v, (int, float))]
-        if len(mejores) >= 2:
-            ganador = max(mejores)[1]
-            e.set_footer(text=f"Mejor aim: {ganador}")
-        return e
+                        value=f"{cabecera}\n{detalle}", inline=False)
 
-    @app_commands.command(name="cs", description="Estadísticas de Counter-Strike de un perfil de Steam (Leetify)")
-    @app_commands.describe(url="URL de Steam o @usuario (vacío = tu perfil vinculado)")
-    async def cs(self, interaction: discord.Interaction, url: str = None):
-        await interaction.response.defer(thinking=True, ephemeral=False)   # visible para todos
-        if not url:
-            propio = self._link_de(interaction.user.id)
-            if not propio:
-                await interaction.followup.send(
-                    "No tienes perfil vinculado. Usa `/cs_vincular` con la URL de tu Steam, "
-                    "o pásame la URL directamente.")
-                return
-            url = propio
-        timeout = aiohttp.ClientTimeout(total=20)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            steam64, _etiqueta, err = await self._resolver_objetivo(session, interaction.guild, url)
-            if err:
-                await interaction.followup.send(f"⚠️ {err}")
-                return
-            try:
-                prof, status = await self._leetify(session, steam64)
-            except Exception as exc:
-                log.warning("Leetify falló: %s", exc)
-                await interaction.followup.send("⚠️ No pude conectar con Leetify, prueba más tarde.")
-                return
+        # veredicto: el mejor Leetify rating manda; si no hay, el mejor aim
+        def _mejor(clave, extractor):
+            vals = [(extractor(p), p.get("name") or s) for p, s in perfiles]
+            vals = [(v, n) for v, n in vals if isinstance(v, (int, float))]
+            return f"{clave}: {max(vals)[1]}" if len(vals) >= 2 else None
 
-        if status == 404 or not prof:
-            await interaction.followup.send(
-                f"No encuentro stats de ese perfil en Leetify. ¿Tiene cuenta y partidas?\n"
-                f"https://csstats.gg/player/{steam64}")
-            return
-        if status != 200:
-            await interaction.followup.send(f"⚠️ Leetify respondió un error ({status}). Prueba más tarde.")
-            return
-        if prof.get("privacy_mode") and str(prof.get("privacy_mode")).lower() not in ("public", "0", "false"):
-            # perfil oculto: aun así damos enlaces
-            await interaction.followup.send(
-                f"El perfil de **{prof.get('name') or steam64}** está oculto en Leetify.\n"
-                f"https://csstats.gg/player/{steam64}")
-            return
-
-        await interaction.followup.send(embed=self._embed(prof, steam64))
-
-    def _embed(self, prof, steam64):
-        nombre = prof.get("name") or "Jugador"
-        ranks = prof.get("ranks") or {}
-        rating = prof.get("rating") or {}
-        stats = prof.get("stats") or {}
-        leetify_url = f"https://leetify.com/app/profile/{steam64}"
-
-        e = discord.Embed(title=f"📊 {nombre}", url=leetify_url, color=0xF84982)
-
-        # rangos: cada modo en su propia línea
-        lineas_rango = []
-        if ranks.get("faceit") is not None:
-            elo = f" · {ranks['faceit_elo']} ELO" if ranks.get("faceit_elo") else ""
-            lineas_rango.append(f"**FACEIT:** Nivel {ranks['faceit']}{elo}")
-        if ranks.get("premier") is not None:
-            lineas_rango.append(f"**Premier:** {ranks['premier']} ELO")
-        if ranks.get("wingman") is not None:
-            lineas_rango.append(f"**Wingman:** {_rango_cs(ranks['wingman'])}")
-        comp = ranks.get("competitive") or []
-        if comp:
-            mejor = max(comp, key=lambda c: c.get("rank") or 0)
-            lineas_rango.append(f"**Competitivo:** {_rango_cs(mejor.get('rank'))} ({mejor.get('map_name')})")
-        e.add_field(name="🎖️ Rangos", value="\n".join(lineas_rango) or "Sin rangos", inline=False)
-
-        # leetify rating
-        e.add_field(name="⭐ Leetify rating",
-                    value=(f"Aim {_num(rating.get('aim'))} · Posic. {_num(rating.get('positioning'))} · "
-                           f"Util. {_num(rating.get('utility'))} · Clutch {_num(rating.get('clutch'))} · "
-                           f"Apertura {_num(rating.get('opening'))}"),
-                    inline=False)
-
-        # puntería
-        e.add_field(name="🎯 Puntería",
-                    value=(f"HS {_pct(stats.get('accuracy_head'))} · "
-                           f"Preaim {_num(stats.get('preaim'), 1, '°')} · "
-                           f"Reacción {_num(stats.get('reaction_time_ms'), 0, ' ms')} · "
-                           f"Spray {_pct(stats.get('spray_accuracy'))}"),
-                    inline=False)
-
-        # winrate
-        wr = prof.get("winrate")
-        tot = prof.get("total_matches")
-        if wr is not None:
-            wr_pct = wr * 100 if wr <= 1 else wr
-            e.add_field(name="📈 Winrate", value=f"{wr_pct:.0f}%" + (f" en {tot} partidas" if tot else ""), inline=True)
-
-        # bans
-        bans = prof.get("bans") or []
-        if bans:
-            e.add_field(name="🚨 Bans", value=", ".join(b.get("platform", "?") for b in bans), inline=True)
-
-        # últimas partidas
-        recientes = prof.get("recent_matches") or []
-        if recientes:
-            lineas = []
-            for m in recientes[:4]:
-                sc = m.get("score") or []
-                marcador = f"{sc[0]}-{sc[1]}" if len(sc) == 2 else ""
-                lr = m.get("leetify_rating")
-                lr_txt = f" · LR {lr*100:+.1f}" if isinstance(lr, (int, float)) else ""
-                mapa = (m.get("map_name") or "?").replace("de_", "")
-                lineas.append(f"{_emoji_resultado(m.get('outcome'))} `{mapa:8}` {marcador}{lr_txt}")
-            e.add_field(name="🕹️ Últimas partidas", value="\n".join(lineas), inline=False)
-
-        e.add_field(name="🔗 Enlaces",
-                    value=f"[Ver en Leetify]({leetify_url}) · [csstats.gg](https://csstats.gg/player/{steam64})",
-                    inline=False)
-        e.set_footer(text="Datos de Leetify")
+        veredicto = (_mejor("Mejor rating", lambda p: (p.get("ranks") or {}).get("leetify"))
+                     or _mejor("Mejor puntería", lambda p: (p.get("rating") or {}).get("aim")))
+        if veredicto:
+            e.set_footer(text=veredicto)
         return e
 
 

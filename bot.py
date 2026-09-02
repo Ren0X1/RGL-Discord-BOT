@@ -51,6 +51,7 @@ COGS = (
     "cogs.automod",
     "cogs.botinfo",
     "cogs.csstats",
+    "cogs.rust",
     "cogs.levels",
     "cogs.reactionroles",
     "cogs.backup",

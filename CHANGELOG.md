@@ -10,6 +10,22 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
 ---
 
+## [1.0.0.f0] - 2026-09-02 · 💥 major
+### ✨ Añadido
+- 🔫 **Stats de Rust**: `/rust [@usuario|url]` con enlace al perfil de Steam, K/D, horas jugadas, logros, puntería por arma con barra, cómo la palma, caza, farmeo, construcción y curiosidades (notas tocadas, metros a caballo, tiempo irradiado…). Los datos salen de la **Steam Web API**, gratis, que publica ~150 contadores del juego. Además `/rust_vincular` y `/rust_desvincular`.
+- 🔗 **Una sola vinculación para los dos juegos**: la cuenta de Steam se guarda ahora en `data/steam_links.json` y la comparten `/cs` y `/rust`. Las vinculaciones que ya existían en `data/cs_links.json` **se migran solas** la primera vez, sin tener que volver a vincular a nadie.
+
+### 🧠 Mejorado
+- 📊 **`/cs` rediseñado y con mucha más chicha**: la API de Leetify publica 21 métricas y el bot solo usaba 9. Ahora enseña el **Leetify rating** como titular, los rangos que faltaban (**Premier** y **Renown**), las tres habilidades con **barra de progreso**, el impacto por ronda (clutch, apertura y rendimiento **como CT vs como T**), mecánica fina (**counter-strafing**, precisión al avistar), **duelos de apertura** separados por bando, **trades** (a cuántos venga y cuántas veces le vengan), **uso de utilidad** (flashes a rivales y a colegas, flashes que acaban en baja, daño de HE, utilidad sin gastar al morir) y la **forma de las últimas 10 partidas** en cuadritos, con el LR medio y la fuente de cada partida (FACEIT/Premier).
+- 👥 **Compañeros del server**: si alguien con quien ha jugado últimamente tiene su Steam vinculado en el Discord, `/cs` lo menciona.
+- 🎨 **El color del mensaje habla**: verde, azul, rosa o rojo según el Leetify rating del jugador. Y se pone el **avatar de Steam** como miniatura.
+- ⚔️ **`/cs_comparar`** usa también el Leetify rating (antes decidía el ganador solo por puntería) y pinta las habilidades con barras.
+
+### 🛠️ Corregido
+- 🔢 **Números mal interpretados en `/cs`**: `clutch`, `apertura` y el rendimiento por bando son ratios por ronda, y se enseñaban en crudo junto a puntuaciones de 0 a 100 (salía un absurdo *"Clutch 0.1"* al lado de *"Aim 98.5"*). Ahora se muestran ×100 y con signo, como los pinta Leetify.
+- 📈 Los porcentajes ya no se adivinan con una heurística (`si el valor es ≤ 1, multiplícalo por 100`), que era frágil: cada métrica se formatea según lo que de verdad devuelve la API.
+- 🔐 **Los scripts perdían los permisos en cada actualización**: `startup.sh` y `update.sh` estaban guardados en git como `100644`, así que cada `git reset --hard` de la Pi los dejaba sin permiso de ejecución y había que hacerles `chmod` a mano. Ahora git guarda el **bit de ejecución** (`100755`) y se restauran solos al sincronizar; por si acaso, `startup.sh` también repone el permiso de todos los `.sh` después de cada sincronización.
+
 ## [0.27.0.f4] - 2026-08-27 · 🛠️ fix
 ### 🛠️ Corregido
 - 📦 **Dependencias al día**: `requirements.txt` fija ahora los mínimos en las últimas versiones publicadas (discord.py 2.7.1, Flask 3.1.3, waitress 3.0.2, python-dotenv 1.2.3, tzdata 2026.3, google-api-python-client 2.199.0, google-auth 2.57.0, google-auth-oauthlib 1.4.1) y declara `aiohttp` y `Werkzeug`, que los cogs y el panel ya importaban directamente sin listarlos.

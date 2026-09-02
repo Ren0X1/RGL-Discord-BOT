@@ -25,6 +25,11 @@ else
     echo "    (la carpeta no es un repo git; ejecuta la preparacion una vez)"
 fi
 
+# Git solo conserva el bit de ejecucion (nada de 777) y, si un fichero se subio
+# sin el, cada 'reset --hard' deja los .sh sin permisos. Se reponen aqui para que
+# la Pi nunca se quede sin poder ejecutar su propio arranque.
+chmod +x "$BOT_DIR"/*.sh 2>/dev/null || true
+
 echo "==> [3/4] Actualizando dependencias del bot..."
 if [ -x "$BOT_DIR/venv/bin/pip" ]; then
     sudo -u "$USUARIO" "$BOT_DIR/venv/bin/pip" install --upgrade -r "$BOT_DIR/requirements.txt" \
