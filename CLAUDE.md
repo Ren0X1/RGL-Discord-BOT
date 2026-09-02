@@ -46,6 +46,17 @@ sudo systemctl restart panel                   # si se tocó el panel
 
 > ⚠️ El script está en `~/discord-bot/startup.sh`, **no** en `~/startup.sh`.
 
+`startup.sh` corre como root pero hace el `git` con `sudo -u renox`. Si algún
+fichero del repo se queda de root, el fetch falla con
+`insufficient permission for adding an object to repository database .git/objects`
+y —ojo— **el script sigue adelante y arranca el bot con el código viejo**, así que
+parece que ha ido bien. Se arregla y se comprueba con:
+
+```bash
+sudo chown -R renox:renox /home/renox/discord-bot
+cd ~/discord-bot && cat VERSION && git log --oneline -1   # siempre verificar
+```
+
 ### Logs
 ```bash
 sudo journalctl -u discordbot -f      # el bot
@@ -402,6 +413,9 @@ el script y no interesa tenerlas dentro del propio backup.
     Contar caracteres (ver *Maquetado de los embeds*).
 12. **Meter la config de todo en un solo `.env`** → ilegible. Lo que se vigila
     (repos, juegos) va en `.env.avisos`.
+13. **Dar por bueno un despliegue porque `startup.sh` dice "Hecho"** → si el
+    `git fetch` falla por permisos, el script continúa y reinicia con el código
+    de antes. Comprobar siempre `cat VERSION` en la Pi al terminar.
 
 ---
 

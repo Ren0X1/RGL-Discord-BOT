@@ -10,6 +10,10 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
 ---
 
+## [1.3.0.f1] - 2026-09-02 · 🛠️ fix
+### 📚 Documentación
+- ⚠️ **`CLAUDE.md`**: documentado el fallo silencioso del despliegue. `startup.sh` corre como root pero hace el `git` como `renox`; si algún fichero del repo se queda de root, el fetch muere con *insufficient permission for adding an object* y **el script sigue y reinicia el bot con el código viejo**, diciendo "Hecho" igualmente. Se arregla con `sudo chown -R renox:renox /home/renox/discord-bot` y se comprueba siempre con `cat VERSION` en la Pi.
+
 ## [1.3.0.f0] - 2026-09-02 · ✨ feature
 ### ✨ Añadido
 - 📰 **Noticias de Steam (`steamnews`)**: el bot vigila los juegos que le digas y publica en un canal lo que los **desarrolladores anuncian en Steam** (parches, devblogs, eventos). Cada juego tiene **su propio hilo** dentro del canal, así el canal principal se queda libre para el panel de reaction roles, y cada noticia **pinga al rol** de ese juego. Filtra el feed para quedarse solo con los anuncios oficiales (fuera PC Gamer, PCGamesN y SteamDB) y traduce el BBCode de Steam a markdown de Discord, con la imagen de cabecera y el vídeo de YouTube si los lleva. `/noticias` (staff) fuerza una comprobación.
