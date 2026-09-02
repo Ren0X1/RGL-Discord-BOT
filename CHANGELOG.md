@@ -10,6 +10,10 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
 ---
 
+## [1.3.0.f2] - 2026-09-02 · 🛠️ fix
+### ✨ Añadido
+- 🧵 **Mensaje de estreno de cada hilo de noticias**: hasta ahora el hilo de un juego no aparecía hasta que ese juego publicaba algo, así que el canal se veía vacío y no había forma de saber si estaba bien configurado. Ahora, la primera vez que el bot ve un juego, le crea el hilo y suelta dentro una presentación con **el rol al que va a avisar**, el App ID y cada cuánto comprueba. Sale **una sola vez por juego** y **no pinga a nadie** (el rol se enseña, pero sin notificar: todavía no lo tiene nadie). Añadir un juego nuevo a `STEAM_NEWS_JUEGOS` le crea su hilo en la siguiente vuelta.
+
 ## [1.3.0.f1] - 2026-09-02 · 🛠️ fix
 ### 📚 Documentación
 - ⚠️ **`CLAUDE.md`**: documentado el fallo silencioso del despliegue. `startup.sh` corre como root pero hace el `git` como `renox`; si algún fichero del repo se queda de root, el fetch muere con *insufficient permission for adding an object* y **el script sigue y reinicia el bot con el código viejo**, diciendo "Hecho" igualmente. Se arregla con `sudo chown -R renox:renox /home/renox/discord-bot` y se comprueba siempre con `cat VERSION` en la Pi.

@@ -250,6 +250,50 @@ class SteamNews(commands.Cog):
         e.set_footer(text=f"Noticias de Steam · {autor}" if autor else "Noticias de Steam")
         return e
 
+    # -------------------------------------------------- presentación del hilo
+    async def _presentar(self, canal, juego):
+        """Crea el hilo de un juego y suelta dentro el mensaje de estreno.
+
+        Se hace **una sola vez por juego** (queda apuntado en el estado). Sirve
+        para dos cosas: que el hilo exista desde el minuto uno aunque el juego
+        no haya sacado nada todavía, y para comprobar de un vistazo que el rol
+        configurado es el que toca. El rol se enseña pero NO se pinga: aún no
+        lo tiene nadie, que el panel de reaction roles se pone después.
+        """
+        clave = str(juego["appid"])
+        if self._estado.get(clave, {}).get("presentado"):
+            return False
+        hilo = await self._hilo(canal, juego)
+        if hilo is None:
+            return False
+
+        rol = f"<@&{juego['rol']}>" if juego["rol"] else "*(ninguno configurado)*"
+        e = discord.Embed(
+            title=f"{juego['emoji']} Noticias de {juego['nombre']}",
+            url=f"https://store.steampowered.com/news/app/{juego['appid']}",
+            description=("Aquí van a caer las novedades que publiquen los "
+                         f"desarrolladores de **{juego['nombre']}** en Steam: parches, "
+                         "devblogs y eventos.\n\nCoge el rol en el canal para que te "
+                         "avise cuando salga algo."),
+            color=_COLOR)
+        e.set_thumbnail(url=("https://cdn.cloudflare.steamstatic.com/steam/apps/"
+                             f"{juego['appid']}/capsule_231x87.jpg"))
+        e.add_field(name="🔔 Avisa a", value=rol, inline=True)
+        e.add_field(name="🆔 App ID", value=str(juego["appid"]), inline=True)
+        e.add_field(name="⏱️ Comprueba cada",
+                    value=f"{config.STEAM_NEWS_INTERVAL} min", inline=True)
+        e.set_footer(text="Mensaje de estreno del hilo · solo sale una vez")
+
+        try:
+            await hilo.send(embed=e, allowed_mentions=discord.AllowedMentions.none())
+        except (discord.Forbidden, discord.HTTPException) as exc:
+            log.warning("No pude presentar el hilo de %s: %s", juego["nombre"], exc)
+            return False
+        self._estado.setdefault(clave, {})["presentado"] = True
+        self._guardar()
+        log.info("Hilo de %s estrenado en %s", juego["nombre"], hilo.id)
+        return True
+
     async def _publicar(self, canal, juego, noticia):
         hilo = await self._hilo(canal, juego)
         if hilo is None:
@@ -279,6 +323,13 @@ class SteamNews(commands.Cog):
             log.warning("No encuentro el canal de noticias %s", config.STEAM_NEWS_CHANNEL_ID)
             return 0
         publicadas = 0
+        # Los hilos que falten se crean y se estrenan antes de nada: así están
+        # ahí desde el primer momento, y al añadir un juego nuevo al .env.avisos
+        # aparece su hilo en la siguiente vuelta sin esperar a que saquen parche.
+        for juego in config.STEAM_NEWS_JUEGOS:
+            if await self._presentar(canal, juego):
+                await asyncio.sleep(2)
+
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
             for juego in config.STEAM_NEWS_JUEGOS:
                 clave = str(juego["appid"])

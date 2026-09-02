@@ -271,9 +271,16 @@ pestaña de novedades de Steam (parches, devblogs, eventos).
   `feed_type == 1` / `steam_community_announcements`: el feed trae además
   noticias de PC Gamer, PCGamesN y SteamDB, que aquí no pintan nada.
 - El contenido viene en el BBCode de Steam y `_a_markdown()` lo traduce.
-- Estado en `data/steam_news.json` (última noticia y el hilo de cada appid).
-  **La primera vuelta no publica**: solo apunta por dónde va cada juego, para no
-  soltar el histórico entero de golpe.
+- **Mensaje de estreno**: la primera vez que se ve un juego, el bot crea su hilo
+  y suelta dentro un mensaje de presentación (rol al que avisará, App ID e
+  intervalo). Así el hilo existe desde el minuto uno aunque el juego no haya
+  sacado nada, y se comprueba de un vistazo que el rol es el correcto. Sale
+  **una sola vez por juego** (`presentado` en el estado) y **no pinga**: el rol
+  se enseña pero con `AllowedMentions.none()`, que aún no lo tiene nadie.
+  Añadir un juego nuevo a `STEAM_NEWS_JUEGOS` crea su hilo en la vuelta siguiente.
+- Estado en `data/steam_news.json` (última noticia, hilo y estreno de cada appid).
+  **La primera vuelta no publica noticias**: solo apunta por dónde va cada juego,
+  para no soltar el histórico entero de golpe.
 - `/noticias` (staff) fuerza una comprobación; `/noticias forzar:True` republica
   la última aunque ya se hubiera visto (para probar).
 
