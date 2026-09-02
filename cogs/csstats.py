@@ -10,8 +10,9 @@ Datos de https://api-public.cs-prod.leetify.com (GET /v3/profile?steam64_id=...)
 que publica rangos (Premier, FACEIT, Wingman, Renown, competitivo por mapa),
 el Leetify rating, 21 métricas de juego y las últimas 100 partidas.
 
-La resolución de perfiles y la vinculación viven en cogs/steamutil.py y se
-comparten con /rust: se vincula el Steam una vez para los dos juegos.
+La resolución de perfiles y la vinculación viven en cogs/steamutil.py. Cada
+juego guarda SU cuenta de Steam: la primera vinculación rellena las dos, pero
+quien use una cuenta para CS y otra para Rust las puede separar.
 
 LEETIFY_API_KEY es opcional (más límite). STEAM_API_KEY se usa para las URLs
 con nombre personalizado (/id/...) y para sacar el avatar del jugador.
@@ -72,6 +73,10 @@ def _punto(v, neutro=0.0):
     if v > neutro:
         return "🟢"
     return "🔴" if v < neutro else "⚪"
+
+
+# Puesto de cada jugador en la comparativa
+_MEDALLAS = ("🥇", "🥈", "🥉", "4️⃣")
 
 
 def _fila(etiqueta, valor, ancho=9):
@@ -147,33 +152,39 @@ class CSStats(commands.Cog):
         if err:
             await interaction.followup.send(f"⚠️ {err}")
             return
-        su.vincular(objetivo.id, steam64)
+        tocados = su.vincular(objetivo.id, steam64, "cs")
+        extra = ("\nComo no tenías nada puesto en `/rust`, te la he dejado también ahí. "
+                 "Si para Rust usas otra cuenta, cámbiala con `/rust_vincular`."
+                 if "rust" in tocados else
+                 "\nLa cuenta de `/rust` se queda como estaba.")
         await interaction.followup.send(
-            f"✅ Perfil vinculado a **{objetivo.display_name}**: `{steam64}`\n"
-            f"Ya puedes usar `/cs` sin parámetros — y te vale también para `/rust`.")
+            f"✅ Cuenta de **Counter-Strike** vinculada a **{objetivo.display_name}**: "
+            f"`{steam64}`\nYa puedes usar `/cs` sin parámetros.{extra}")
 
     @app_commands.command(name="cs_desvincular", description="Elimina tu perfil de Steam vinculado")
     async def cs_desvincular(self, interaction: discord.Interaction):
-        if not su.desvincular(interaction.user.id):
-            await interaction.response.send_message("No tenías ningún perfil vinculado.", ephemeral=True)
+        if not su.desvincular(interaction.user.id, "cs"):
+            await interaction.response.send_message(
+                "No tenías ninguna cuenta vinculada para Counter-Strike.", ephemeral=True)
             return
         await interaction.response.send_message(
-            "🗑️ Perfil desvinculado (deja de valer también para `/rust`).", ephemeral=True)
+            "🗑️ Cuenta de Counter-Strike desvinculada. La de `/rust` sigue donde estaba.",
+            ephemeral=True)
 
     @app_commands.command(name="cs", description="Estadísticas de Counter-Strike de un perfil de Steam (Leetify)")
     @app_commands.describe(url="URL de Steam o @usuario (vacío = tu perfil vinculado)")
     async def cs(self, interaction: discord.Interaction, url: str = None):
         await interaction.response.defer(thinking=True, ephemeral=False)   # visible para todos
         if not url:
-            url = su.link_de(interaction.user.id)
+            url = su.link_de(interaction.user.id, "cs")
             if not url:
                 await interaction.followup.send(
-                    "No tienes perfil vinculado. Usa `/cs_vincular` con la URL de tu Steam, "
+                    "No tienes cuenta vinculada para CS. Usa `/cs_vincular` con la URL de tu Steam, "
                     "o pásame la URL directamente.")
                 return
 
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=25)) as session:
-            steam64, _etiqueta, err = await su.resolver_objetivo(session, interaction.guild, url)
+            steam64, _etiqueta, err = await su.resolver_objetivo(session, interaction.guild, url, "cs")
             if err:
                 await interaction.followup.send(f"⚠️ {err}")
                 return
@@ -213,7 +224,7 @@ class CSStats(commands.Cog):
         perfiles, errores = [], []
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
             for texto in entradas:
-                steam64, etiqueta, err = await su.resolver_objetivo(session, interaction.guild, texto)
+                steam64, etiqueta, err = await su.resolver_objetivo(session, interaction.guild, texto, "cs")
                 if err:
                     errores.append(f"⚠️ {err}")
                     continue
@@ -420,44 +431,101 @@ class CSStats(commands.Cog):
         return e
 
     def _embed_comparativa(self, perfiles):
+        """Un campo por jugador, ordenados por Leetify rating, y al final quien
+        gana cada apartado. Todos los campos van a lo ancho: con 4 jugadores y
+        nombres largos cualquier reparto en columnas se parte."""
         e = discord.Embed(title="⚔️ Comparativa de Counter-Strike", color=0xF84982)
         e.set_author(name=f"{config.CS_EMOJI} Counter-Strike 2".strip(), icon_url=CS_ICONO)
-        for prof, steam64 in perfiles:
+
+        def _lr(par):
+            v = (par[0].get("ranks") or {}).get("leetify")
+            return v if isinstance(v, (int, float)) else float("-inf")
+
+        orden = sorted(perfiles, key=_lr, reverse=True)
+
+        for i, (prof, steam64) in enumerate(orden):
             ranks = prof.get("ranks") or {}
             rating = prof.get("rating") or {}
             stats = prof.get("stats") or {}
-            partes = []
-            if ranks.get("leetify") is not None:
-                partes.append(f"⭐ **LR {ranks['leetify']:+.2f}**")
-            if ranks.get("premier") is not None:
-                partes.append(f"Premier {su.miles(ranks['premier'])}")
-            if ranks.get("faceit") is not None:
-                elo = f" ({su.miles(ranks['faceit_elo'])})" if ranks.get("faceit_elo") else ""
-                partes.append(f"FACEIT {ranks['faceit']}{elo}")
-            wr = prof.get("winrate")
+            nombre = prof.get("name") or steam64
+
+            # primera linea: el titular, con el punto de color del rating
+            titular = []
+            lr = ranks.get("leetify")
+            if lr is not None:
+                titular.append(f"{_punto(lr)} **Rating {lr:+.2f}**")
+            wr, tot = prof.get("winrate"), prof.get("total_matches")
             if wr is not None:
-                partes.append(f"Winrate {wr * 100:.0f}%")
-            cabecera = " · ".join(partes) or "Sin rangos"
-            detalle = (f"`Puntería` {su.barra(rating.get('aim'))} {_n(rating.get('aim'), 0)}\n"
-                       f"`Posición` {su.barra(rating.get('positioning'))} {_n(rating.get('positioning'), 0)}\n"
-                       f"`Utilidad` {su.barra(rating.get('utility'))} {_n(rating.get('utility'), 0)}\n"
-                       f"HS {_p(stats.get('accuracy_head'))} · "
-                       f"Reacción {_n(stats.get('reaction_time_ms'), 0, ' ms')} · "
-                       f"Preaim {_n(stats.get('preaim'), 1, '°')}")
-            e.add_field(name=f"🎮 {prof.get('name') or steam64}",
-                        value=f"{cabecera}\n{detalle}", inline=False)
+                titular.append(f"🏆 **{wr * 100:.0f}%**"
+                               + (f" de {su.miles(tot)}" if tot else ""))
+            if ranks.get("premier") is not None:
+                titular.append(f"Premier **{su.miles(ranks['premier'])}**")
+            elif ranks.get("faceit") is not None:
+                titular.append(f"FACEIT **{ranks['faceit']}**")
 
-        # veredicto: el mejor Leetify rating manda; si no hay, el mejor aim
-        def _mejor(clave, extractor):
-            vals = [(extractor(p), p.get("name") or s) for p, s in perfiles]
-            vals = [(v, n) for v, n in vals if isinstance(v, (int, float))]
-            return f"{clave}: {max(vals)[1]}" if len(vals) >= 2 else None
+            lineas = [" · ".join(titular) or "Sin rangos"]
+            for etiqueta, v in (("Puntería", rating.get("aim")),
+                                ("Posición", rating.get("positioning")),
+                                ("Utilidad", rating.get("utility"))):
+                lineas.append(f"`{etiqueta:<9}` {su.barra(v)} **{_n(v, 0)}**")
 
-        veredicto = (_mejor("Mejor rating", lambda p: (p.get("ranks") or {}).get("leetify"))
-                     or _mejor("Mejor puntería", lambda p: (p.get("rating") or {}).get("aim")))
-        if veredicto:
-            e.set_footer(text=veredicto)
+            # mecanica y impacto, en dos lineas apretadas
+            mecanica = " · ".join(x for x in (
+                f"HS **{_p(stats['accuracy_head'])}**" if stats.get("accuracy_head") is not None else "",
+                f"Reacción **{_n(stats.get('reaction_time_ms'), 0, 'ms')}**"
+                if stats.get("reaction_time_ms") is not None else "",
+                f"Preaim **{_n(stats.get('preaim'), 1, '°')}**"
+                if stats.get("preaim") is not None else "") if x)
+            if mecanica:
+                lineas.append(mecanica)
+            impacto = " · ".join(f"{_punto(v)} {n} **{_r(v)}**" for n, v in
+                                     (("Clutch", rating.get("clutch")),
+                                      ("Apertura", rating.get("opening")))
+                                     if v is not None)
+            if impacto:
+                lineas.append(impacto)
+
+            e.add_field(name=f"{_MEDALLAS[min(i, 3)]} {nombre}",
+                        value="\n".join(lineas), inline=False)
+
+        # --- quien gana cada cosa ---
+        e.add_field(name="🏅 Quién gana qué", value=self._veredicto(perfiles), inline=False)
+        e.set_footer(text="Datos de Leetify")
         return e
+
+    # Apartados del recuento: etiqueta, de donde sale, como se pinta y si gana
+    # el numero mas alto o el mas bajo (reaccion y preaim: cuanto menos, mejor).
+    _APARTADOS = (
+        ("Rating", lambda p: (p.get("ranks") or {}).get("leetify"), lambda v: f"{v:+.2f}", True),
+        ("Winrate", lambda p: p.get("winrate"), lambda v: f"{v * 100:.0f}%", True),
+        ("Puntería", lambda p: (p.get("rating") or {}).get("aim"), lambda v: f"{v:.0f}", True),
+        ("Posición", lambda p: (p.get("rating") or {}).get("positioning"), lambda v: f"{v:.0f}", True),
+        ("Utilidad", lambda p: (p.get("rating") or {}).get("utility"), lambda v: f"{v:.0f}", True),
+        ("Headshots", lambda p: (p.get("stats") or {}).get("accuracy_head"), lambda v: f"{v:.1f}%", True),
+        ("Reacción", lambda p: (p.get("stats") or {}).get("reaction_time_ms"), lambda v: f"{v:.0f}ms", False),
+        ("Preaim", lambda p: (p.get("stats") or {}).get("preaim"), lambda v: f"{v:.1f}°", False),
+        ("Clutch", lambda p: (p.get("rating") or {}).get("clutch"), lambda v: f"{v * 100:+.2f}", True),
+        ("Aperturas", lambda p: (p.get("rating") or {}).get("opening"), lambda v: f"{v * 100:+.2f}", True),
+    )
+
+    def _veredicto(self, perfiles):
+        lineas, ganadas = [], {}
+        for etiqueta, saca, pinta, mas_alto in self._APARTADOS:
+            vals = [(saca(prof), prof.get("name") or s) for prof, s in perfiles]
+            vals = [(v, n) for v, n in vals if isinstance(v, (int, float))]
+            if len(vals) < 2:
+                continue
+            valor, quien = (max if mas_alto else min)(vals, key=lambda x: x[0])
+            ganadas[quien] = ganadas.get(quien, 0) + 1
+            lineas.append(f"`{etiqueta:<9}` **{quien}** ({pinta(valor)})")
+        if not lineas:
+            return "No hay datos suficientes para comparar."
+        mejor = max(ganadas.items(), key=lambda x: x[1])
+        if list(ganadas.values()).count(mejor[1]) == 1:
+            lineas.append(f"\n👑 Manda **{mejor[0]}**, {mejor[1]} de {len(lineas)} apartados.")
+        else:
+            lineas.append("\n🤝 Empate técnico, no hay un amo claro.")
+        return "\n".join(lineas)
 
 
 async def setup(bot):

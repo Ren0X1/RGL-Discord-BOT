@@ -4,6 +4,7 @@ Módulo 26 — Estadísticas de Rust.
 /rust [usuario|url]   -> stats del jugador + enlace a su perfil de Steam
 /rust_vincular <url>  -> vincula tu cuenta de Steam
 /rust_desvincular     -> la quita
+/rust_comparar        -> compara hasta 4 cuentas
 
 Los datos salen de la **Steam Web API** (gratis), que para Rust (appid 252490)
 publica ~150 contadores: combate, puntería, caza, farmeo, construcción y
@@ -12,8 +13,9 @@ curiosidades. Hace falta `STEAM_API_KEY` en el .env.
 Ojo: Steam solo los sirve si el jugador tiene el perfil **y los detalles del
 juego** en público (Perfil -> Editar -> Privacidad -> "Detalles del juego").
 
-La vinculación se comparte con /cs: quien ya tenga el Steam vinculado allí no
-tiene que volver a hacerlo (ver cogs/steamutil.py).
+Cada juego guarda SU cuenta de Steam (ver cogs/steamutil.py): la primera
+vinculación rellena las dos, pero quien juegue a Rust con una cuenta distinta
+a la de CS la puede separar con /rust_vincular.
 """
 
 import logging
@@ -66,6 +68,15 @@ def _kd(kills, muertes):
     return f"{kills / muertes:.2f}"
 
 
+def _kd_txt(kd):
+    """Pinta un K/D ya calculado (en la comparativa viene hecho)."""
+    return "—" if kd is None else f"{kd:.2f}"
+
+
+# Puesto de cada jugador en la comparativa
+_MEDALLAS = ("🥇", "🥈", "🥉", "4️⃣")
+
+
 def _num(v):
     """Número corto. En una columna estrecha '1.234.567' no cabe y Discord lo
     tira a la línea de abajo, así que a partir de 100.000 se abrevia."""
@@ -87,6 +98,36 @@ def _punto(v, neutro=0.0):
     if v > neutro:
         return "🟢"
     return "🔴" if v < neutro else "⚪"
+
+
+def _resumen(s):
+    """Los numeros gordos de una cuenta, ya masticados para la comparativa.
+
+    Steam no da agregados: hay que sumar los contadores a mano (madera + piedra
+    + metal... para el farmeo, cada bicho para la caza).
+    """
+    bajas = _g(s, "kill_player") or 0
+    muertes = _g(s, "deaths") or 0
+    dados = (_g(s, "bullet_hit_player") or 0) + (_g(s, "shotgun_hit_player") or 0)
+    disparos = (_g(s, "bullet_fired") or 0) + (_g(s, "shotgun_fired") or 0)
+    farmeo = sum(_g(s, *claves) or 0 for claves in (
+        ("harvest.wood", "harvested_wood"), ("harvest.stones", "harvested_stones"),
+        ("harvest.metal_ore", "acquired_metal.ore"), ("harvest.sulfur_ore",),
+        ("harvest.cloth", "harvested_cloth"), ("harvested_leather",)))
+    caza = sum(_g(s, c) or 0 for c in ("kill_bear", "kill_wolf", "kill_boar",
+                                       "kill_stag", "kill_chicken", "kill_horse"))
+    return {
+        "bajas": bajas,
+        "muertes": muertes,
+        "kd": bajas / muertes if muertes else None,
+        "punteria": _pct(dados, disparos),
+        "headshots": _pct(_g(s, "headshot", "headshots") or 0, dados),
+        "farmeo": farmeo or None,
+        "caza": caza or None,
+        "chatarra": _g(s, "acquired_scrap"),
+        "bloques": _g(s, "placed_blocks"),
+        "suicidios": _g(s, "death_suicide"),
+    }
 
 
 def _linea(etiqueta, valor, ancho=9):
@@ -195,18 +236,23 @@ class Rust(commands.Cog):
         if err:
             await interaction.followup.send(f"⚠️ {err}")
             return
-        su.vincular(objetivo.id, steam64)
+        tocados = su.vincular(objetivo.id, steam64, "rust")
+        extra = ("\nComo no tenías nada puesto en `/cs`, te la he dejado también ahí. "
+                 "Si para CS usas otra cuenta, cámbiala con `/cs_vincular`."
+                 if "cs" in tocados else
+                 "\nLa cuenta de `/cs` se queda como estaba.")
         await interaction.followup.send(
-            f"✅ Cuenta de Steam vinculada a **{objetivo.display_name}**: `{steam64}`\n"
-            f"Ya puedes usar `/rust` sin parámetros — y te vale también para `/cs`.")
+            f"✅ Cuenta de **Rust** vinculada a **{objetivo.display_name}**: `{steam64}`\n"
+            f"Ya puedes usar `/rust` sin parámetros.{extra}")
 
     @app_commands.command(name="rust_desvincular", description="Elimina tu cuenta de Steam vinculada")
     async def rust_desvincular(self, interaction: discord.Interaction):
-        if not su.desvincular(interaction.user.id):
-            await interaction.response.send_message("No tenías ninguna cuenta vinculada.", ephemeral=True)
+        if not su.desvincular(interaction.user.id, "rust"):
+            await interaction.response.send_message(
+                "No tenías ninguna cuenta vinculada para Rust.", ephemeral=True)
             return
         await interaction.response.send_message(
-            "🗑️ Cuenta desvinculada (deja de valer también para `/cs`).", ephemeral=True)
+            "🗑️ Cuenta de Rust desvinculada. La de `/cs` sigue donde estaba.", ephemeral=True)
 
     @app_commands.command(name="rust", description="Estadísticas de Rust de una cuenta de Steam")
     @app_commands.describe(url="URL de Steam o @usuario (vacío = tu cuenta vinculada)")
@@ -218,15 +264,15 @@ class Rust(commands.Cog):
                 "<https://steamcommunity.com/dev/apikey>")
             return
         if not url:
-            url = su.link_de(interaction.user.id)
+            url = su.link_de(interaction.user.id, "rust")
             if not url:
                 await interaction.followup.send(
-                    "No tienes cuenta vinculada. Usa `/rust_vincular` con la URL de tu Steam, "
+                    "No tienes cuenta vinculada para Rust. Usa `/rust_vincular` con la URL de tu Steam, "
                     "o pásame la URL directamente.")
                 return
 
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=25)) as session:
-            steam64, _etiqueta, err = await su.resolver_objetivo(session, interaction.guild, url)
+            steam64, _etiqueta, err = await su.resolver_objetivo(session, interaction.guild, url, "rust")
             if err:
                 await interaction.followup.send(f"⚠️ {err}")
                 return
@@ -378,6 +424,141 @@ class Rust(commands.Cog):
                     inline=False)
         e.set_footer(text="Datos de la Steam Web API")
         return e
+
+
+    @app_commands.command(name="rust_comparar",
+                          description="Compara las stats de Rust de varias cuentas o usuarios")
+    @app_commands.describe(jugador1="Usuario (@mención, debe estar vinculado) o URL de Steam",
+                           jugador2="Usuario (@mención) o URL de Steam",
+                           jugador3="Opcional", jugador4="Opcional")
+    async def rust_comparar(self, interaction: discord.Interaction, jugador1: str, jugador2: str,
+                            jugador3: str = None, jugador4: str = None):
+        await interaction.response.defer(thinking=True, ephemeral=False)
+        if not config.STEAM_API_KEY:
+            await interaction.followup.send(
+                "⚠️ Falta la `STEAM_API_KEY` en el `.env`. Es gratis: "
+                "<https://steamcommunity.com/dev/apikey>")
+            return
+
+        entradas = [x for x in (jugador1, jugador2, jugador3, jugador4) if x]
+        cuentas, errores = [], []
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=40)) as session:
+            total_logros = await self._total_logros_juego(session)
+            for texto in entradas:
+                steam64, etiqueta, err = await su.resolver_objetivo(session, interaction.guild, texto, "rust")
+                if err:
+                    errores.append(f"⚠️ {err}")
+                    continue
+                try:
+                    stats, logros, fallo = await self._stats(session, steam64)
+                except Exception as exc:
+                    log.warning("Steam falló para %s: %s", steam64, exc)
+                    errores.append(f"⚠️ No pude consultar a **{etiqueta}**.")
+                    continue
+                if fallo:
+                    errores.append(f"⚠️ **{etiqueta}** — {fallo}")
+                    continue
+                perfil = await su.perfil_steam(session, steam64)
+                horas = await self._horas(session, steam64)
+                cuentas.append((stats, logros, horas, perfil, steam64))
+
+        if len(cuentas) < 2:
+            await interaction.followup.send(
+                ("\n".join(errores) or "No pude comparar.") +
+                "\n\nNecesito al menos **dos** cuentas válidas (públicas y con Rust).")
+            return
+        await interaction.followup.send(
+            content="\n".join(errores) if errores else None,
+            embed=self._embed_comparativa(cuentas, total_logros))
+
+    # ----------------------------------------------- embed de la comparativa
+    def _embed_comparativa(self, cuentas, total_logros):
+        """Un campo por jugador, ordenados por K/D, y al final quién gana qué.
+        Todo a lo ancho: con 4 nombres largos cualquier reparto en columnas se
+        parte."""
+        e = discord.Embed(title="⚔️ Comparativa de Rust", color=COLOR)
+        e.set_author(name=f"{config.RUST_EMOJI} Rust".strip(), icon_url=RUST_ICONO)
+
+        datos = [(_resumen(s), logros, horas, perfil, steam64)
+                 for s, logros, horas, perfil, steam64 in cuentas]
+
+        def _kd(fila):
+            v = fila[0]["kd"]
+            return v if isinstance(v, (int, float)) else float("-inf")
+
+        for i, (r, logros, horas, perfil, steam64) in enumerate(sorted(datos, key=_kd, reverse=True)):
+            nombre = (perfil or {}).get("personaname") or steam64
+
+            titular = [f"{_punto(r['kd'], 1.0)} **K/D {_kd_txt(r['kd'])}**",
+                       f"⚔️ **{su.miles(r['bajas'])}** bajas",
+                       f"☠️ **{su.miles(r['muertes'])}** muertes"]
+            extra = []
+            if horas:
+                extra.append(f"🕹️ **{su.miles(round(horas))} h**")
+            if logros:
+                extra.append(f"🏆 **{logros}**" + (f"/{total_logros}" if total_logros else ""))
+
+            lineas = [" · ".join(titular)]
+            if extra:
+                lineas.append(" · ".join(extra))
+            if r["punteria"] is not None:
+                lineas.append(f"`Puntería ` {su.barra(r['punteria'], 50)} **{r['punteria']:.1f}%**"
+                              + (f" · HS **{r['headshots']:.1f}%**"
+                                 if r["headshots"] is not None else ""))
+            recuento = " · ".join(x for x in (
+                f"🪓 Farmeo **{_num(r['farmeo'])}**" if r["farmeo"] else "",
+                f"🏹 Caza **{_num(r['caza'])}**" if r["caza"] else "",
+                f"🏠 Bloques **{_num(r['bloques'])}**" if r["bloques"] else "") if x)
+            if recuento:
+                lineas.append(recuento)
+
+            e.add_field(name=f"{_MEDALLAS[min(i, 3)]} {nombre}",
+                        value="\n".join(lineas), inline=False)
+
+        e.add_field(name="🏅 Quién gana qué",
+                    value=self._veredicto(datos), inline=False)
+        e.set_footer(text="Datos de la Steam Web API")
+        return e
+
+    # Apartados del recuento: etiqueta, de donde sale, como se pinta y si gana
+    # el numero mas alto o el mas bajo (suicidios: gana el que menos, claro).
+    _APARTADOS = (
+        ("K/D", lambda r, lo, h: r["kd"], lambda v: f"{v:.2f}", True),
+        ("Bajas", lambda r, lo, h: r["bajas"], lambda v: su.miles(v), True),
+        ("Puntería", lambda r, lo, h: r["punteria"], lambda v: f"{v:.1f}%", True),
+        ("Headshots", lambda r, lo, h: r["headshots"], lambda v: f"{v:.1f}%", True),
+        ("Horas", lambda r, lo, h: h, lambda v: f"{su.miles(round(v))} h", True),
+        ("Logros", lambda r, lo, h: lo or None, lambda v: str(v), True),
+        ("Farmeo", lambda r, lo, h: r["farmeo"], _num, True),
+        ("Chatarra", lambda r, lo, h: r["chatarra"], _num, True),
+        ("Caza", lambda r, lo, h: r["caza"], _num, True),
+        ("Constructor", lambda r, lo, h: r["bloques"], _num, True),
+        ("Manazas", lambda r, lo, h: r["suicidios"], lambda v: f"{su.miles(v)} suicidios", False),
+    )
+
+    def _veredicto(self, datos):
+        lineas, ganadas = [], {}
+        for etiqueta, saca, pinta, mas_alto in self._APARTADOS:
+            vals = [(saca(r, lo, h), (perfil or {}).get("personaname") or s)
+                    for r, lo, h, perfil, s in datos]
+            vals = [(v, n) for v, n in vals if isinstance(v, (int, float))]
+            if len(vals) < 2:
+                continue
+            valor, quien = (max if mas_alto else min)(vals, key=lambda x: x[0])
+            # "Manazas" es una coña, no cuenta para el recuento de victorias
+            if etiqueta != "Manazas":
+                ganadas[quien] = ganadas.get(quien, 0) + 1
+            lineas.append(f"`{etiqueta:<11}` **{quien}** ({pinta(valor)})")
+        if not lineas:
+            return "No hay datos suficientes para comparar."
+        if ganadas:
+            mejor = max(ganadas.items(), key=lambda x: x[1])
+            total = sum(1 for e_, _, _, _ in self._APARTADOS if e_ != "Manazas")
+            if list(ganadas.values()).count(mejor[1]) == 1:
+                lineas.append(f"\n👑 Manda **{mejor[0]}**, {mejor[1]} apartados de {total}.")
+            else:
+                lineas.append("\n🤝 Empate técnico, no hay un amo claro.")
+        return "\n".join(lineas)
 
 
 async def setup(bot):

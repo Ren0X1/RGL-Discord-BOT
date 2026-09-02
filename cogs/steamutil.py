@@ -6,9 +6,15 @@ Qué hace:
   - Guardar los perfiles vinculados a cada usuario de Discord.
   - Consultar el perfil público de Steam (nombre, avatar, país, antigüedad).
 
-Los perfiles vinculados viven en `data/steam_links.json` y los COMPARTEN /cs y
-/rust: la peña vincula su Steam una vez y le vale para los dos juegos. Si aún
-existe el antiguo `data/cs_links.json` se migra solo la primera vez.
+Los perfiles vinculados viven en `data/steam_links.json`, **uno por juego**:
+hay quien tiene una cuenta de Steam para CS y otra para Rust. El formato es
+`{"<id de discord>": {"cs": "7656...", "rust": "7656..."}}`.
+
+La primera vinculación de alguien rellena los dos juegos (lo normal es tener
+una sola cuenta); a partir de ahí cada `/cs_vincular` o `/rust_vincular` toca
+solo el suyo. El formato antiguo (un SteamID suelto por usuario) y el aún más
+antiguo `data/cs_links.json` se migran solos, copiando el ID a los dos juegos
+para no desvincular a nadie.
 
 Esto NO es un cog: no se registra en la tupla COGS de bot.py.
 """
@@ -63,6 +69,26 @@ def barra(valor, maximo=100, celdas=10):
 
 
 # ---------------------------------------------------- perfiles vinculados
+JUEGOS = ("cs", "rust")
+
+
+def _normalizar(d):
+    """Deja cualquier formato en el actual: {uid: {"cs": id, "rust": id}}.
+
+    El formato viejo era un SteamID suelto por usuario; se copia a los dos
+    juegos para que nadie se quede desvinculado al actualizar.
+    """
+    salida = {}
+    for uid, v in (d or {}).items():
+        if isinstance(v, dict):
+            juegos = {j: str(v[j]) for j in JUEGOS if v.get(j)}
+            if juegos:
+                salida[str(uid)] = juegos
+        elif v:
+            salida[str(uid)] = {j: str(v) for j in JUEGOS}
+    return salida
+
+
 def _migrar_si_hace_falta():
     """La primera vez, copia las vinculaciones del fichero antiguo de CS."""
     if os.path.exists(LINKS_PATH) or not os.path.exists(LINKS_PATH_VIEJO):
@@ -71,7 +97,7 @@ def _migrar_si_hace_falta():
         with open(LINKS_PATH_VIEJO, encoding="utf-8") as f:
             d = json.load(f)
         if isinstance(d, dict) and d:
-            guardar_links(d)
+            guardar_links(_normalizar(d))
             log.info("Migradas %d vinculaciones de cs_links.json a steam_links.json", len(d))
     except (OSError, ValueError) as exc:
         log.warning("No pude migrar cs_links.json: %s", exc)
@@ -82,7 +108,7 @@ def links():
     try:
         with open(LINKS_PATH, encoding="utf-8") as f:
             d = json.load(f)
-        return d if isinstance(d, dict) else {}
+        return _normalizar(d) if isinstance(d, dict) else {}
     except (OSError, ValueError):
         return {}
 
@@ -93,28 +119,49 @@ def guardar_links(d):
         json.dump(d, f, ensure_ascii=False, indent=2)
 
 
-def link_de(uid):
-    return links().get(str(uid))
+def link_de(uid, juego):
+    """SteamID64 que ese usuario tiene puesto para ese juego (o None)."""
+    return links().get(str(uid), {}).get(juego)
 
 
-def vincular(uid, steam64):
+def vincular(uid, steam64, juego):
+    """Vincula la cuenta a un juego. Devuelve la tupla de juegos que ha tocado.
+
+    Si el otro juego estaba vacío se rellena también: lo normal es tener una
+    sola cuenta de Steam, y así con vincular una vez ya vale para los dos.
+    """
     d = links()
-    d[str(uid)] = steam64
+    actual = d.setdefault(str(uid), {})
+    tocados = [juego]
+    for otro in JUEGOS:
+        if otro != juego and not actual.get(otro):
+            tocados.append(otro)
+    for j in tocados:
+        actual[j] = str(steam64)
     guardar_links(d)
+    return tuple(tocados)
 
 
-def desvincular(uid):
+def desvincular(uid, juego):
+    """Quita la vinculación de ese juego. Las de los demás se quedan."""
     d = links()
-    if d.pop(str(uid), None) is None:
+    actual = d.get(str(uid)) or {}
+    if actual.pop(juego, None) is None:
         return False
+    if not actual:
+        d.pop(str(uid), None)
     guardar_links(d)
     return True
 
 
 def discord_de(steam64):
-    """SteamID64 -> ID de Discord vinculado (o None). Para listar compañeros."""
-    for uid, sid in links().items():
-        if sid == steam64:
+    """SteamID64 -> ID de Discord vinculado (o None). Para listar compañeros.
+
+    Busca en todos los juegos: la cuenta puede estar puesta solo en uno.
+    """
+    steam64 = str(steam64)
+    for uid, juegos in links().items():
+        if steam64 in juegos.values():
             try:
                 return int(uid)
             except ValueError:
@@ -149,11 +196,11 @@ async def resolver_steam64(session, texto):
     return None, "No reconozco esa URL de Steam. Pásame el enlace al perfil (`/profiles/...` o `/id/...`)."
 
 
-async def resolver_objetivo(session, guild, texto):
+async def resolver_objetivo(session, guild, texto, juego):
     """Devuelve (steam64, etiqueta, error).
 
-    Acepta una @mención o un ID de Discord (hace falta perfil vinculado), o
-    directamente una URL de Steam / SteamID64.
+    Acepta una @mención o un ID de Discord (hace falta perfil vinculado para
+    ese juego), o directamente una URL de Steam / SteamID64.
     """
     texto = (texto or "").strip()
     m = _MENCION_RE.match(texto)
@@ -163,12 +210,13 @@ async def resolver_objetivo(session, guild, texto):
     elif texto.isdigit() and len(texto) < 17:
         uid = int(texto)
     if uid is not None:
-        sid = link_de(uid)
+        sid = link_de(uid, juego)
         miembro = guild.get_member(uid) if guild else None
         nombre = miembro.display_name if miembro else f"<@{uid}>"
         if not sid:
-            return None, nombre, (f"**{nombre}** no tiene perfil vinculado. "
-                                  f"Que use `/cs_vincular` (o `/rust_vincular`) con la URL de su Steam.")
+            return None, nombre, (f"**{nombre}** no tiene cuenta vinculada para "
+                                  f"{'Counter-Strike' if juego == 'cs' else 'Rust'}. "
+                                  f"Que use `/{juego}_vincular` con la URL de su Steam.")
         return sid, nombre, None
     sid, err = await resolver_steam64(session, texto)
     return sid, texto, err

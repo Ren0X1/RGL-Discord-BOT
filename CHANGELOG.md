@@ -10,6 +10,17 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
 ---
 
+## [1.2.0.f0] - 2026-09-02 · ✨ feature
+### ✨ Añadido
+- ⚔️ **`/rust_comparar`**: compara hasta 4 cuentas de Rust. Cada una con su medalla (ordenadas por K/D), K/D, bajas, muertes, horas, logros, puntería con barra, farmeo, caza y bloques puestos. Y al final un **"quién gana qué"** apartado por apartado, con el rey de la partida y el premio *manazas* para el que más veces se ha suicidado.
+
+### 🧠 Mejorado
+- 🏅 **`/cs_comparar` rediseñado** al estilo del nuevo `/cs`: jugadores ordenados por Leetify rating con 🥇🥈🥉, puntos verde/rojo en el rating y en clutch/aperturas, habilidades con barra, y un **"quién gana qué"** con 10 apartados (rating, winrate, puntería, posición, utilidad, headshots, reacción, preaim, clutch y aperturas) que corona al que más se lleva. Antes el veredicto era una sola línea en el pie.
+
+### 🛠️ Corregido
+- 🔗 **Vincular Rust ya no te desvincula de CS**: la cuenta de Steam se guardaba una sola vez para los dos juegos, así que quien usa una cuenta para CS y otra para Rust se pisaba la anterior con `/rust_vincular`. Ahora `data/steam_links.json` guarda **una cuenta por juego**. La primera vinculación sigue rellenando las dos (lo normal es tener una sola cuenta) y a partir de ahí cada comando toca solo la suya. Las vinculaciones que ya existían se migran solas a los dos juegos, así que nadie se queda fuera; si usas cuentas distintas, vuelve a lanzar el `/cs_vincular` o `/rust_vincular` que te falte.
+- 🧹 `/cs_desvincular` y `/rust_desvincular` quitan solo lo suyo y lo dicen claro.
+
 ## [1.1.0.f0] - 2026-09-02 · ✨ feature
 ### 🧠 Mejorado
 - 🎨 **Logo del juego en `/cs` y `/rust`**: los dos mensajes llevan ahora el icono oficial de Steam (Counter-Strike 2 y Rust) en la cabecera, con el avatar del jugador donde estaba. Si prefieres subir los logos como emojis del servidor, se pueden enchufar con `CS_EMOJI` y `RUST_EMOJI` en el `.env`.
