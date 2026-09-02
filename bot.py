@@ -55,6 +55,7 @@ COGS = (
     "cogs.levels",
     "cogs.reactionroles",
     "cogs.backup",
+    "cogs.steamnews",
 )
 
 

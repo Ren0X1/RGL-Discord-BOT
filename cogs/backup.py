@@ -1,9 +1,20 @@
 """
 Módulo 26 — Backups automáticos a Google Drive.
 
-Cada BACKUP_INTERVAL_HOURS horas comprime la carpeta data/ (bases de datos y
-JSON de la IA) en un .zip con fecha, lo sube a una carpeta de tu Google Drive y
-borra los backups viejos dejando solo los BACKUP_KEEP más recientes.
+Cada BACKUP_INTERVAL_HOURS horas comprime en un .zip con fecha todo lo que hace
+falta para levantar el bot en una máquina limpia, lo sube a una carpeta de tu
+Google Drive y borra los backups viejos dejando solo los BACKUP_KEEP recientes.
+
+Qué entra en el zip:
+  data/            bases de datos y JSON (memoria de la IA, niveles, tickets...)
+  .env, .env.*     TODA la configuración, incluido .env.avisos  (BACKUP_INCLUDE_ENV)
+  CLAUDE.md        el manual del proyecto, que documenta hasta los servicios
+  systemd/*.service  los units de systemd, que viven fuera del repo
+
+Lo único que NO se guarda son las credenciales de Google Drive
+(data/gdrive_token.json y data/gdrive_client.json): si se pierden se vuelven a
+autorizar con scripts/autorizar_gdrive.py, y no interesa tenerlas dando vueltas
+dentro del propio backup.
 
 Comandos:
   /backup     -> lanza un backup ahora mismo (staff)
@@ -45,6 +56,15 @@ _RAIZ = os.path.dirname(os.path.dirname(__file__))
 DATA_DIR = os.path.join(_RAIZ, "data")
 SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 PREFIJO = "rgl-bot-backup-"
+
+# Documentación del proyecto que va dentro del backup. Está en git, pero un
+# backup tiene que servir por sí solo aunque el repo no esté a mano.
+DOCS = ("CLAUDE.md",)
+
+# Los units de systemd viven fuera del repo (/etc/systemd/system) y sin ellos
+# el bot no arranca solo tras un reinicio, así que se guardan también.
+SYSTEMD_DIR = "/etc/systemd/system"
+SERVICIOS = ("discordbot.service", "panel.service", "bot-startup.service")
 
 
 class Backup(commands.Cog):
@@ -111,7 +131,7 @@ class Backup(commands.Cog):
         return self._carpeta_id
 
     def _comprimir(self):
-        """Crea el zip del contenido de data/ y devuelve su ruta."""
+        """Crea el zip con data/, la configuración y los units, y devuelve su ruta."""
         marca = datetime.datetime.now().strftime("%Y-%m-%d_%H%M")
         destino = os.path.join(_RAIZ, f"{PREFIJO}{marca}.zip")
         with zipfile.ZipFile(destino, "w", zipfile.ZIP_DEFLATED) as z:
@@ -122,14 +142,31 @@ class Backup(commands.Cog):
                             continue
                         completo = os.path.join(raiz, f)
                         z.write(completo, os.path.join("data", os.path.relpath(completo, DATA_DIR)))
+
             if config.BACKUP_INCLUDE_ENV:
-                # todos los .env* de la raíz, al mismo nivel que data/
+                # todos los .env* de la raíz (.env, .env.avisos, .env.example...),
+                # al mismo nivel que data/
                 for f in sorted(os.listdir(_RAIZ)):
                     if not f.startswith(".env") or f.endswith((".swp", ".swo", "~")):
                         continue
                     completo = os.path.join(_RAIZ, f)
                     if os.path.isfile(completo):
                         z.write(completo, f)
+
+            for f in DOCS:
+                completo = os.path.join(_RAIZ, f)
+                if os.path.isfile(completo):
+                    z.write(completo, f)
+
+            # Los .service solo existen en la Pi; en Windows o si no se pueden
+            # leer, simplemente no van (el resto del backup sigue valiendo).
+            for f in SERVICIOS:
+                completo = os.path.join(SYSTEMD_DIR, f)
+                try:
+                    if os.path.isfile(completo):
+                        z.write(completo, os.path.join("systemd", f))
+                except OSError as exc:
+                    log.info("No pude meter %s en el backup: %s", f, exc)
         return destino
 
     def _subir(self, ruta):

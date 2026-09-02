@@ -6,7 +6,13 @@ Así no escribes tokens ni IDs dentro del código.
 import os
 from dotenv import load_dotenv
 
+_RAIZ = os.path.dirname(os.path.abspath(__file__))
+
 load_dotenv()
+# Los "avisos automáticos" (releases de GitHub y noticias de Steam) llevan listas
+# largas de repos y de juegos que ensuciaban el .env principal, así que viven en
+# su propio fichero. Si no existe, no pasa nada: esas funciones quedan apagadas.
+load_dotenv(os.path.join(_RAIZ, ".env.avisos"))
 
 
 def _int(name, default=0):
@@ -17,6 +23,27 @@ def _int(name, default=0):
 def _ids(name):
     raw = os.getenv(name, "")
     return [int(x) for x in raw.replace(" ", "").split(",") if x.isdigit()]
+
+
+def _juegos_steam(name):
+    """'730:123:Counter-Strike 2, 252490:456:Rust' -> lista de dicts.
+
+    Cada juego es `appid:id_del_rol:Nombre` y, opcional, `:emoji` al final.
+    El rol puede ir vacío (`730::CS2`) si no se quiere pingar a nadie.
+    """
+    juegos = []
+    raw = os.getenv(name, "").replace("\n", ",").replace(";", ",")
+    for trozo in raw.split(","):
+        partes = [x.strip() for x in trozo.split(":")]
+        if len(partes) < 2 or not partes[0].isdigit():
+            continue
+        juegos.append({
+            "appid": int(partes[0]),
+            "rol": int(partes[1]) if partes[1].isdigit() else 0,
+            "nombre": partes[2] if len(partes) > 2 and partes[2] else f"App {partes[0]}",
+            "emoji": partes[3] if len(partes) > 3 and partes[3] else "📰",
+        })
+    return juegos
 
 
 def _bool(name, default=True):
@@ -167,7 +194,7 @@ AI_SYSTEM_PROMPT = os.getenv("AI_SYSTEM_PROMPT", _AI_PROMPT_DEFECTO)
 # Contexto del servidor (vale para TODOS). Predefinido aquí; editable en vivo con /ia_contexto_server.
 AI_SERVER_CONTEXT = os.getenv("AI_SERVER_CONTEXT", "")
 
-# --- 19) Anuncio de nuevas releases de GitHub ---
+# --- 19) Anuncio de nuevas releases de GitHub --- (se lee de .env.avisos)
 # Uno o varios repos "owner/repo" separados por comas. Ej: "Ren0X1/RGL-Discord-BOT, torvalds/linux"
 GITHUB_RELEASES_REPOS = [r.strip() for r in os.getenv("GITHUB_RELEASES_REPOS", "")
                          .replace("\n", ",").replace(";", ",").split(",") if "/" in r]
@@ -175,6 +202,15 @@ GITHUB_RELEASES_CHANNEL_ID = _int("GITHUB_RELEASES_CHANNEL_ID")   # canal donde 
 GITHUB_RELEASES_INTERVAL = max(5, _int("GITHUB_RELEASES_INTERVAL", 15))   # minutos entre comprobaciones
 GITHUB_RELEASES_MENTION = os.getenv("GITHUB_RELEASES_MENTION", "@everyone")   # qué pingar (vacío = nada)
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")   # opcional: más límite en la API de GitHub
+
+# --- 27) Noticias de Steam --- (se lee de .env.avisos)
+# Publica en un canal las noticias oficiales que los desarrolladores sacan en
+# Steam, un hilo por juego y pingando al rol que corresponda.
+STEAM_NEWS_ENABLED = _bool("STEAM_NEWS_ENABLED", False)
+STEAM_NEWS_CHANNEL_ID = _int("STEAM_NEWS_CHANNEL_ID")      # canal donde van los hilos
+STEAM_NEWS_JUEGOS = _juegos_steam("STEAM_NEWS_JUEGOS")     # appid:rol:Nombre[:emoji], por comas
+STEAM_NEWS_INTERVAL = max(5, _int("STEAM_NEWS_INTERVAL", 20))   # minutos entre comprobaciones
+STEAM_NEWS_MAX = max(1, _int("STEAM_NEWS_MAX", 3))         # noticias por juego y vuelta (anti-avalancha)
 
 # --- 20) Alertas de salud de la máquina (DM al owner) ---
 HEALTH_INTERVAL = max(1, _int("HEALTH_INTERVAL", 5))      # minutos entre comprobaciones

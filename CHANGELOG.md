@@ -10,6 +10,15 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
 ---
 
+## [1.3.0.f0] - 2026-09-02 · ✨ feature
+### ✨ Añadido
+- 📰 **Noticias de Steam (`steamnews`)**: el bot vigila los juegos que le digas y publica en un canal lo que los **desarrolladores anuncian en Steam** (parches, devblogs, eventos). Cada juego tiene **su propio hilo** dentro del canal, así el canal principal se queda libre para el panel de reaction roles, y cada noticia **pinga al rol** de ese juego. Filtra el feed para quedarse solo con los anuncios oficiales (fuera PC Gamer, PCGamesN y SteamDB) y traduce el BBCode de Steam a markdown de Discord, con la imagen de cabecera y el vídeo de YouTube si los lleva. `/noticias` (staff) fuerza una comprobación.
+- ⚙️ **`.env.avisos`**: fichero de configuración aparte para todo lo que el bot vigila (repos de GitHub y juegos de Steam). Las listas largas ya no ensucian el `.env` normal. Plantilla en `.env.avisos.example`; si el fichero no existe, esas funciones simplemente quedan apagadas.
+
+### 🧠 Mejorado
+- 💾 **El backup ya vale para levantar el bot en una máquina limpia**: además de `data/` y los `.env*` (incluido el nuevo `.env.avisos`), ahora se lleva el **`CLAUDE.md`** y los **units de systemd** (`discordbot.service`, `panel.service`, `bot-startup.service`), que viven fuera del repo y sin ellos el bot no arranca solo tras un reinicio. Lo único que sigue sin guardarse son las credenciales de Google Drive.
+- 📚 **`CLAUDE.md` al día**: documenta los tres servicios de systemd **enteros y cómo instalarlos**, los dos ficheros de configuración, la vinculación de Steam por juego, el presupuesto de anchura de los embeds y el módulo de noticias. Y va dentro del backup.
+
 ## [1.2.0.f0] - 2026-09-02 · ✨ feature
 ### ✨ Añadido
 - ⚔️ **`/rust_comparar`**: compara hasta 4 cuentas de Rust. Cada una con su medalla (ordenadas por K/D), K/D, bajas, muertes, horas, logros, puntería con barra, farmeo, caza y bloques puestos. Y al final un **"quién gana qué"** apartado por apartado, con el rey de la partida y el premio *manazas* para el que más veces se ha suicidado.
