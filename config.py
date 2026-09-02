@@ -197,6 +197,11 @@ LEETIFY_API_KEY = os.getenv("LEETIFY_API_KEY", "")   # opcional: más límite (l
 #   - /rust la NECESITA (sus stats salen enteras de Steam).
 #   - /cs la usa para las URLs /id/<nombre> (vanity) y para el avatar del jugador.
 STEAM_API_KEY = os.getenv("STEAM_API_KEY", "")
+# Emojis propios del servidor para las cabeceras de /cs y /rust (opcional).
+# Sube los logos en Ajustes del servidor -> Emojis y pega aqui el formato completo,
+# p.ej. CS_EMOJI=<:cs2:1234567890>. Vacio = solo el icono de Steam del embed.
+CS_EMOJI = os.getenv("CS_EMOJI", "")
+RUST_EMOJI = os.getenv("RUST_EMOJI", "")
 
 # --- Versión del bot (fichero VERSION en la raíz; lo actualiza el workflow de release) ---
 _DIR_CFG = os.path.dirname(os.path.abspath(__file__))

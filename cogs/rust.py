@@ -32,6 +32,10 @@ APPID = 252490
 STEAM_API = su.STEAM_API
 COLOR = 0xCD412B   # el naranja-óxido de Rust
 
+# Icono cuadrado de Rust en Steam (32x32), para la cabecera del embed
+RUST_ICONO = ("https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images"
+              "/apps/252490/820be4782639f9c4b64fa3ca7e6c26a95ae4fd1c.jpg")
+
 
 def _g(s, *nombres):
     """Suma los contadores que existan. Rust arrastra claves duplicadas de
@@ -62,7 +66,36 @@ def _kd(kills, muertes):
     return f"{kills / muertes:.2f}"
 
 
-def _linea(etiqueta, valor, ancho=12):
+def _num(v):
+    """Número corto. En una columna estrecha '1.234.567' no cabe y Discord lo
+    tira a la línea de abajo, así que a partir de 100.000 se abrevia."""
+    if v is None:
+        return "—"
+    v = int(v)
+    if v >= 1_000_000:
+        return f"{v / 1_000_000:.2f}".rstrip("0").rstrip(".").replace(".", ",") + "M"
+    if v >= 100_000:
+        return f"{v / 1000:.1f}".replace(".", ",") + "K"
+    return su.miles(v)
+
+
+def _punto(v, neutro=0.0):
+    """Discord no pinta texto de colores dentro de un embed, así que el verde/rojo
+    lo da un punto delante del dato."""
+    if v is None:
+        return "⚪"
+    if v > neutro:
+        return "🟢"
+    return "🔴" if v < neutro else "⚪"
+
+
+def _linea(etiqueta, valor, ancho=9):
+    """Etiqueta monoespaciada + valor.
+
+    OJO con el ancho: en un campo de 3 columnas de Discord entran unos 15
+    caracteres entre etiqueta y valor. Pasarse parte la línea y el dato se cae
+    debajo. A lo ancho del embed el margen es de sobra.
+    """
     return f"`{etiqueta:<{ancho}}` **{valor}**"
 
 
@@ -219,27 +252,31 @@ class Rust(commands.Cog):
     # ------------------------------------------------------------ embed
     def _embed(self, s, logros, total_logros, horas, perfil, steam64, enlace):
         nombre = (perfil or {}).get("personaname") or "Jugador"
-        e = discord.Embed(title=f"🔫 {nombre}", url=enlace, color=COLOR)
+        e = discord.Embed(title=nombre, url=enlace, color=COLOR)
+        # El logo de Rust en la cabecera; el avatar de Steam sigue en la esquina
+        e.set_author(name=f"{config.RUST_EMOJI} Rust".strip(), icon_url=RUST_ICONO)
         if (perfil or {}).get("avatarfull"):
             e.set_thumbnail(url=perfil["avatarfull"])
 
         # --- cabecera: lo que se mira de un vistazo ---
         kills = _g(s, "kill_player") or 0
         muertes = _g(s, "deaths") or 0
+        kd = kills / muertes if muertes else None
         cabecera = [f"⚔️ **{su.miles(kills)}** bajas · ☠️ **{su.miles(muertes)}** muertes · "
-                    f"📊 K/D **{_kd(kills, muertes)}**"]
+                    f"{_punto(kd, 1.0)} K/D **{_kd(kills, muertes)}**"]
         extra = []
         if horas:
             extra.append(f"🕹️ {su.miles(round(horas))} h jugadas")
         if logros:
-            extra.append(f"🏆 {logros}/{total_logros} logros" if total_logros else f"🏆 {logros} logros")
+            extra.append(f"🏆 {logros}/{total_logros} logros" if total_logros
+                         else f"🏆 {logros} logros")
         if (perfil or {}).get("loccountrycode"):
             extra.append(f"📍 {perfil['loccountrycode']}")
         if extra:
             cabecera.append(" · ".join(extra))
         e.description = "\n".join(cabecera)
 
-        # --- puntería, arma por arma, con barra ---
+        # --- punteria, arma por arma, con barra (campo a lo ancho) ---
         armas = [
             ("Balas", _g(s, "bullet_hit_player") or 0, _g(s, "bullet_fired") or 0),
             ("Escopeta", _g(s, "shotgun_hit_player") or 0, _g(s, "shotgun_fired") or 0),
@@ -249,8 +286,8 @@ class Rust(commands.Cog):
         for etiqueta, dados, disparos in armas:
             if not disparos:
                 continue
-            p = _pct(dados, disparos)
-            punteria.append(f"`{etiqueta:<9}` {su.barra(p, 50)} **{p:.1f}%** "
+            pc = _pct(dados, disparos)
+            punteria.append(f"`{etiqueta:<8}` {su.barra(pc, 50)} **{pc:.1f}%** "
                             f"· {su.miles(dados)}/{su.miles(disparos)}")
         hs = _g(s, "headshot", "headshots") or 0
         if hs:
@@ -260,21 +297,11 @@ class Rust(commands.Cog):
         if punteria:
             e.add_field(name="🎯 Puntería", value="\n".join(punteria), inline=False)
 
-        # --- cómo la palma ---
-        formas = [("Suicidios", _g(s, "death_suicide")), ("Caídas", _g(s, "death_fall")),
-                  ("Lobos", _g(s, "death_wolf")), ("Osos", _g(s, "death_bear")),
-                  ("Otros", _g(s, "death_entity", "death_selfinflicted"))]
-        formas = [(n, v) for n, v in formas if v]
-        heridas = _g(s, "wounded") or 0
-        if formas or heridas:
-            lineas = [_linea(n, su.miles(v), 10) for n, v in formas]
-            if heridas:
-                lineas.append(_linea("Tumbado", su.miles(heridas), 10))
-                if _g(s, "wounded_healed"):
-                    lineas.append(_linea("Revivido", su.miles(_g(s, "wounded_healed")), 10))
-            if _g(s, "wounded_assisted"):
-                lineas.append(_linea("Ha revivido", su.miles(_g(s, "wounded_assisted")), 10))
-            e.add_field(name="💀 Cómo la palma", value="\n".join(lineas), inline=True)
+        # ---------------------------------------------------------------------
+        # Fila de 3 columnas. Van estrechas: etiqueta + valor no pueden pasar de
+        # ~15 caracteres o Discord parte la linea. "Como la palma" va la ultima
+        # porque su titulo es el mas largo y asi no queda pegado al de al lado.
+        # ---------------------------------------------------------------------
 
         # --- caza ---
         animales = [("🐻 Osos", _g(s, "kill_bear")), ("🐺 Lobos", _g(s, "kill_wolf")),
@@ -283,7 +310,7 @@ class Rust(commands.Cog):
         animales = [(n, v) for n, v in animales if v]
         if animales:
             e.add_field(name="🏹 Caza",
-                        value="\n".join(f"{n} **{su.miles(v)}**" for n, v in animales), inline=True)
+                        value="\n".join(f"{n} **{_num(v)}**" for n, v in animales), inline=True)
 
         # --- farmeo ---
         recursos = [("Madera", _g(s, "harvest.wood", "harvested_wood")),
@@ -293,13 +320,29 @@ class Rust(commands.Cog):
                     ("Tela", _g(s, "harvest.cloth", "harvested_cloth")),
                     ("Cuero", _g(s, "harvested_leather")),
                     ("Chatarra", _g(s, "acquired_scrap")),
-                    ("Combustible", _g(s, "acquired_lowgradefuel"))]
+                    ("Combust.", _g(s, "acquired_lowgradefuel"))]
         recursos = [(n, v) for n, v in recursos if v]
         if recursos:
             e.add_field(name="🪓 Farmeo",
-                        value="\n".join(_linea(n, su.miles(v)) for n, v in recursos), inline=True)
+                        value="\n".join(_linea(n, _num(v), 8) for n, v in recursos), inline=True)
 
-        # --- base y saqueo ---
+        # --- como la palma ---
+        formas = [("Suicidios", _g(s, "death_suicide")), ("Caídas", _g(s, "death_fall")),
+                  ("Lobos", _g(s, "death_wolf")), ("Osos", _g(s, "death_bear")),
+                  ("Otros", _g(s, "death_entity", "death_selfinflicted"))]
+        formas = [(n, v) for n, v in formas if v]
+        heridas = _g(s, "wounded") or 0
+        if formas or heridas:
+            lineas = [_linea(n, _num(v)) for n, v in formas]
+            if heridas:
+                lineas.append(_linea("Tumbado", _num(heridas)))
+                if _g(s, "wounded_healed"):
+                    lineas.append(_linea("Revivido", _num(_g(s, "wounded_healed"))))
+            if _g(s, "wounded_assisted"):
+                lineas.append(_linea("Revive a", _num(_g(s, "wounded_assisted"))))
+            e.add_field(name="💀 Cómo la palma", value="\n".join(lineas), inline=True)
+
+        # --- base y saqueo (se queda solo en su fila: va a lo ancho) ---
         base = [("Bloques", _g(s, "placed_blocks")), ("Mejorados", _g(s, "upgraded_blocks")),
                 ("Planos", _g(s, "blueprint_studied")), ("Barriles", _g(s, "destroyed_barrels")),
                 ("Granadas", _g(s, "grenades_thrown")), ("Cohetes", _g(s, "rocket_fired"))]
@@ -308,7 +351,7 @@ class Rust(commands.Cog):
             e.add_field(name="🏠 Base y saqueo",
                         value="\n".join(_linea(n, su.miles(v), 10) for n, v in base), inline=True)
 
-        # --- las tonterías, que son las que dan juego ---
+        # --- las tonterias, que son las que dan juego ---
         curiosas = []
         if _g(s, "InstrumentNotesPlayed"):
             curiosas.append(f"🎸 **{su.miles(_g(s, 'InstrumentNotesPlayed'))}** notas tocadas")

@@ -46,16 +46,42 @@ _RANGOS_CS = {
 _FUENTES = {"faceit": "FACEIT", "matchmaking": "Premier", "premier": "Premier",
             "esea": "ESEA", "esportal": "Esportal", "renown": "Renown"}
 
-_CUADROS = {"win": "🟩", "won": "🟩", "loss": "🟥", "lose": "🟥", "lost": "🟥",
-            "tie": "🟨", "draw": "🟨"}
+# Cómo acabó cada partida. Nada de cuadraditos de color: de un vistazo no se
+# distinguen, y en el móvil menos.
+_RESULTADOS = {"win": "✅", "won": "✅", "loss": "❌", "lose": "❌", "lost": "❌",
+               "tie": "🟰", "draw": "🟰"}
+
+# Icono cuadrado de CS2 en Steam (32x32), para la cabecera del embed
+CS_ICONO = ("https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images"
+            "/apps/730/8dbc71957312bbd3baea65848b545be9eae2a355.jpg")
 
 
 def _rango_cs(n):
     return None if n is None else _RANGOS_CS.get(n, f"rango {n}")
 
 
-def _cuadro(outcome):
-    return _CUADROS.get((outcome or "").lower(), "⬜")
+def _resultado(outcome):
+    return _RESULTADOS.get((outcome or "").lower(), "❔")
+
+
+def _punto(v, neutro=0.0):
+    """Discord no pinta texto de colores dentro de un embed, así que el verde/rojo
+    lo da un punto delante del dato: verde si va por encima, rojo si por debajo."""
+    if v is None:
+        return "⚪"
+    if v > neutro:
+        return "🟢"
+    return "🔴" if v < neutro else "⚪"
+
+
+def _fila(etiqueta, valor, ancho=9):
+    """Etiqueta monoespaciada + valor.
+
+    OJO con el ancho: en un campo de 3 columnas de Discord entran unos 15
+    caracteres entre etiqueta y valor. Pasarse parte la línea y el dato se cae
+    debajo. A media anchura (2 columnas) el margen sube a ~24.
+    """
+    return f"`{etiqueta:<{ancho}}` **{valor}**"
 
 
 def _p(x, dec=1):
@@ -219,14 +245,16 @@ class CSStats(commands.Cog):
         leetify_url = f"https://leetify.com/app/profile/{steam64}"
         lr = ranks.get("leetify")
 
-        e = discord.Embed(title=f"📊 {nombre}", url=leetify_url, color=_color(lr))
+        e = discord.Embed(title=nombre, url=leetify_url, color=_color(lr))
+        # El logo de CS2 en la cabecera; el avatar de Steam sigue en la esquina
+        e.set_author(name=f"{config.CS_EMOJI} Counter-Strike 2".strip(), icon_url=CS_ICONO)
         if (perfil_steam or {}).get("avatarfull"):
             e.set_thumbnail(url=perfil_steam["avatarfull"])
 
         # --- cabecera: el rating global y el balance ---
         cabecera = []
         if lr is not None:
-            cabecera.append(f"⭐ **Leetify rating {lr:+.2f}**")
+            cabecera.append(f"{_punto(lr)} **Leetify rating {lr:+.2f}**")
         wr, tot = prof.get("winrate"), prof.get("total_matches")
         if wr is not None:
             cabecera.append(f"🏆 **{wr * 100:.0f}%** de victorias"
@@ -234,7 +262,7 @@ class CSStats(commands.Cog):
         if cabecera:
             e.description = " · ".join(cabecera)
 
-        # --- rangos, uno por línea ---
+        # --- rangos, uno por linea (campo a lo ancho: aqui si caben etiquetas largas) ---
         lineas = []
         if ranks.get("premier") is not None:
             lineas.append(f"`Premier    ` **{su.miles(ranks['premier'])}** ELO")
@@ -259,100 +287,117 @@ class CSStats(commands.Cog):
         if barras:
             e.add_field(name="⭐ Habilidades", value="\n".join(barras), inline=False)
 
-        # --- impacto por ronda (ratios, se pintan x100 como en Leetify) ---
-        impacto = []
-        if rating.get("clutch") is not None:
-            impacto.append(f"`Clutch  ` **{_r(rating['clutch'])}**")
-        if rating.get("opening") is not None:
-            impacto.append(f"`Apertura` **{_r(rating['opening'])}**")
-        if rating.get("ct_leetify") is not None:
-            impacto.append(f"`Como CT ` **{_r(rating['ct_leetify'])}**")
-        if rating.get("t_leetify") is not None:
-            impacto.append(f"`Como T  ` **{_r(rating['t_leetify'])}**")
-        if impacto:
-            e.add_field(name="💥 Impacto por ronda", value="\n".join(impacto), inline=True)
+        # ---------------------------------------------------------------------
+        # Fila de 3 columnas. Cada columna es estrecha (~125 px): etiqueta + valor
+        # no pueden pasar de ~15 caracteres o Discord parte la linea y el dato
+        # se cae debajo de su etiqueta.
+        # ---------------------------------------------------------------------
 
-        # --- mecánica fina ---
+        # --- mecanica fina ---
         mecanica = []
         if stats.get("accuracy_head") is not None:
-            mecanica.append(f"`Headshots  ` **{_p(stats['accuracy_head'])}**")
+            mecanica.append(_fila("Headshots", _p(stats["accuracy_head"])))
         if stats.get("accuracy_enemy_spotted") is not None:
-            mecanica.append(f"`Al avistar ` **{_p(stats['accuracy_enemy_spotted'])}**")
+            mecanica.append(_fila("Avistando", _p(stats["accuracy_enemy_spotted"])))
         if stats.get("spray_accuracy") is not None:
-            mecanica.append(f"`Spray      ` **{_p(stats['spray_accuracy'])}**")
+            mecanica.append(_fila("Spray", _p(stats["spray_accuracy"])))
         if stats.get("counter_strafing_good_shots_ratio") is not None:
-            mecanica.append(f"`Counter-str` **{_p(stats['counter_strafing_good_shots_ratio'])}**")
+            mecanica.append(_fila("C-strafe", _p(stats["counter_strafing_good_shots_ratio"])))
         if stats.get("preaim") is not None:
-            mecanica.append(f"`Preaim     ` **{_n(stats['preaim'], 1, '°')}**")
+            mecanica.append(_fila("Preaim", _n(stats["preaim"], 1, "°")))
         if stats.get("reaction_time_ms") is not None:
-            mecanica.append(f"`Reacción   ` **{_n(stats['reaction_time_ms'], 0, ' ms')}**")
+            mecanica.append(_fila("Reacción", _n(stats["reaction_time_ms"], 0, "ms")))
         if mecanica:
             e.add_field(name="🎯 Mecánica", value="\n".join(mecanica), inline=True)
 
         # --- duelos de apertura, CT y T por separado ---
         duelos = []
         if stats.get("ct_opening_duel_success_percentage") is not None:
-            duelos.append(f"`Gana de CT ` **{_p(stats['ct_opening_duel_success_percentage'], 0)}**")
+            duelos.append(_fila("Gana CT", _p(stats["ct_opening_duel_success_percentage"], 0)))
         if stats.get("t_opening_duel_success_percentage") is not None:
-            duelos.append(f"`Gana de T  ` **{_p(stats['t_opening_duel_success_percentage'], 0)}**")
+            duelos.append(_fila("Gana T", _p(stats["t_opening_duel_success_percentage"], 0)))
         if stats.get("ct_opening_aggression_success_rate") is not None:
-            duelos.append(f"`Agresión CT` **{_p(stats['ct_opening_aggression_success_rate'], 0)}**")
+            duelos.append(_fila("Agres. CT", _p(stats["ct_opening_aggression_success_rate"], 0)))
         if stats.get("t_opening_aggression_success_rate") is not None:
-            duelos.append(f"`Agresión T ` **{_p(stats['t_opening_aggression_success_rate'], 0)}**")
+            duelos.append(_fila("Agres. T", _p(stats["t_opening_aggression_success_rate"], 0)))
         if duelos:
-            e.add_field(name="⚔️ Duelos de apertura", value="\n".join(duelos), inline=True)
+            e.add_field(name="⚔️ Aperturas", value="\n".join(duelos), inline=True)
 
-        # --- trades: cuánto ayuda y cuánto le vengan ---
+        # --- trades: cuanto venga y cuanto le vengan ---
         trades = []
         if stats.get("trade_kills_success_percentage") is not None:
-            trades.append(f"`Venga bajas` **{_p(stats['trade_kills_success_percentage'], 0)}**")
+            trades.append(_fila("Yo vengo", _p(stats["trade_kills_success_percentage"], 0), 10))
         if stats.get("traded_deaths_success_percentage") is not None:
-            trades.append(f"`Le vengan  ` **{_p(stats['traded_deaths_success_percentage'], 0)}**")
+            trades.append(_fila("Me vengan", _p(stats["traded_deaths_success_percentage"], 0), 10))
         if stats.get("trade_kill_opportunities_per_round") is not None:
-            trades.append(f"`Ocasiones  ` **{_n(stats['trade_kill_opportunities_per_round'], 2)}**/ronda")
+            trades.append(_fila("Ocas/ronda",
+                                _n(stats["trade_kill_opportunities_per_round"], 2), 10))
         if trades:
             e.add_field(name="🤝 Trades", value="\n".join(trades), inline=True)
+
+        # ---------------------------------------------------------------------
+        # Fila de 2 columnas: al quedar solo dos campos Discord les da media
+        # anchura (~187 px), asi que aqui si caben el punto de color y las
+        # etiquetas largas.
+        # ---------------------------------------------------------------------
+
+        # --- impacto por ronda (ratios, se pintan x100 como en Leetify) ---
+        # Aqui lo que canta es el signo, asi que en vez de etiqueta monoespaciada
+        # va el punto de color: verde si suma, rojo si resta.
+        impacto = []
+        for etiqueta, clave in (("Clutch", "clutch"), ("Apertura", "opening"),
+                                ("Como CT", "ct_leetify"), ("Como T", "t_leetify")):
+            v = rating.get(clave)
+            if v is not None:
+                impacto.append(f"{_punto(v)} {etiqueta} **{_r(v)}**")
+        if impacto:
+            e.add_field(name="💥 Por ronda", value="\n".join(impacto), inline=True)
 
         # --- utilidad: flashes y granadas ---
         util = []
         if stats.get("flashbang_thrown") is not None:
-            util.append(f"`Flashes    ` **{_n(stats['flashbang_thrown'], 1)}**/partida")
+            util.append(_fila("Flashes", f"{_n(stats['flashbang_thrown'], 1)}/partida", 11))
         if stats.get("flashbang_hit_foe_per_flashbang") is not None:
-            util.append(f"`Ciega rival` **{_n(stats['flashbang_hit_foe_per_flashbang'], 2)}**"
-                        f" ({_n(stats.get('flashbang_hit_foe_avg_duration'), 1, ' s')})")
+            util.append(_fila("Ciega rival",
+                              f"{_n(stats['flashbang_hit_foe_per_flashbang'], 2)}"
+                              f" ({_n(stats.get('flashbang_hit_foe_avg_duration'), 1, 's')})", 11))
         if stats.get("flashbang_hit_friend_per_flashbang") is not None:
-            util.append(f"`Ciega amigo` **{_n(stats['flashbang_hit_friend_per_flashbang'], 2)}**")
+            util.append(_fila("Ciega amigo", _n(stats["flashbang_hit_friend_per_flashbang"], 2), 11))
         if stats.get("flashbang_leading_to_kill") is not None:
-            util.append(f"`Flash->baja` **{_p(stats['flashbang_leading_to_kill'], 0)}**")
+            util.append(_fila("Flash→baja", _p(stats["flashbang_leading_to_kill"], 0), 11))
         if stats.get("he_foes_damage_avg") is not None:
-            util.append(f"`Daño HE    ` **{_n(stats['he_foes_damage_avg'], 0)}**"
-                        f" (a colegas {_n(stats.get('he_friends_damage_avg'), 0)})")
+            util.append(_fila("Daño HE", _n(stats["he_foes_damage_avg"], 0), 11))
+            util.append(_fila("A colegas", _n(stats.get("he_friends_damage_avg"), 0), 11))
         if stats.get("utility_on_death_avg") is not None:
-            util.append(f"`Sin usar   ` **{_n(stats['utility_on_death_avg'], 0)}$** al morir")
+            util.append(_fila("Sin usar", f"{_n(stats['utility_on_death_avg'], 0)}$/muerte", 11))
         if util:
-            e.add_field(name="💣 Utilidad", value="\n".join(util), inline=False)
+            e.add_field(name="💣 Utilidad", value="\n".join(util), inline=True)
 
         # --- forma reciente ---
         recientes = prof.get("recent_matches") or []
         if recientes:
-            forma = "".join(_cuadro(m.get("outcome")) for m in recientes[:10])
+            forma = "".join(_resultado(m.get("outcome")) for m in recientes[:10])
             ganadas = sum(1 for m in recientes[:10] if (m.get("outcome") or "").lower() in ("win", "won"))
             lrs = [m.get("leetify_rating") for m in recientes[:10]
                    if isinstance(m.get("leetify_rating"), (int, float))]
-            media = f" · LR medio {sum(lrs) / len(lrs) * 100:+.2f}" if lrs else ""
-            lineas = [f"{forma}  **{ganadas}-{min(10, len(recientes)) - ganadas}**{media}", ""]
+            media = sum(lrs) / len(lrs) * 100 if lrs else None
+            resumen = f"{forma}  **{ganadas}-{min(10, len(recientes)) - ganadas}**"
+            if media is not None:
+                resumen += f" · {_punto(media)} LR **{media:+.2f}**"
+            lineas = [resumen, ""]
             for m in recientes[:5]:
                 sc = m.get("score") or []
                 marcador = f"{sc[0]}-{sc[1]}" if len(sc) == 2 else ""
                 lr_m = m.get("leetify_rating")
-                lr_txt = f" · {lr_m * 100:+.2f}" if isinstance(lr_m, (int, float)) else ""
+                lr_txt = (f" · {_punto(lr_m)} **{lr_m * 100:+.2f}**"
+                          if isinstance(lr_m, (int, float)) else "")
                 mapa = (m.get("map_name") or "?").replace("de_", "").replace("cs_", "")
                 fuente = _FUENTES.get((m.get("data_source") or "").lower(), "")
-                lineas.append(f"{_cuadro(m.get('outcome'))} `{mapa:<10}` `{marcador:>5}`{lr_txt}"
+                lineas.append(f"{_resultado(m.get('outcome'))} `{mapa:<9}` `{marcador:>5}`{lr_txt}"
                               + (f" · {fuente}" if fuente else ""))
             e.add_field(name="🕹️ Últimas partidas", value="\n".join(lineas), inline=False)
 
-        # --- con quién juega, si están en el server ---
+        # --- con quien juega, si estan en el server ---
         companeros = []
         for t in (prof.get("recent_teammates") or [])[:10]:
             uid = su.discord_de(t.get("steam64_id"))
@@ -364,7 +409,8 @@ class CSStats(commands.Cog):
         # --- bans ---
         bans = prof.get("bans") or []
         if bans:
-            e.add_field(name="🚨 Bans", value=", ".join(str(b.get("platform", "?")) for b in bans), inline=False)
+            e.add_field(name="🚨 Bans",
+                        value=", ".join(str(b.get("platform", "?")) for b in bans), inline=False)
 
         e.add_field(name="🔗 Enlaces",
                     value=f"[Leetify]({leetify_url}) · [csstats.gg](https://csstats.gg/player/{steam64}) · "
@@ -375,6 +421,7 @@ class CSStats(commands.Cog):
 
     def _embed_comparativa(self, perfiles):
         e = discord.Embed(title="⚔️ Comparativa de Counter-Strike", color=0xF84982)
+        e.set_author(name=f"{config.CS_EMOJI} Counter-Strike 2".strip(), icon_url=CS_ICONO)
         for prof, steam64 in perfiles:
             ranks = prof.get("ranks") or {}
             rating = prof.get("rating") or {}

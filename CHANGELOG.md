@@ -10,6 +10,16 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
 ---
 
+## [1.1.0.f0] - 2026-09-02 · ✨ feature
+### 🧠 Mejorado
+- 🎨 **Logo del juego en `/cs` y `/rust`**: los dos mensajes llevan ahora el icono oficial de Steam (Counter-Strike 2 y Rust) en la cabecera, con el avatar del jugador donde estaba. Si prefieres subir los logos como emojis del servidor, se pueden enchufar con `CS_EMOJI` y `RUST_EMOJI` en el `.env`.
+- 🟢 **Verde y rojo en los números que lo piden**: Discord no deja pintar texto de color dentro de un embed, así que va un punto delante: el Leetify rating, el impacto por ronda (clutch, apertura, como CT/T), el LR de cada partida y el K/D de Rust salen con 🟢 si van a favor y 🔴 si van en contra.
+- ✅ **Adiós a los cuadraditos**: las últimas partidas de `/cs` se marcan con ✅ ganada, ❌ perdida y 🟰 empate, que se distinguen de un vistazo (los 🟩🟥🟨 no).
+- 📐 **`/rust` mejor repartido**: *Caza*, *Farmeo* y *Cómo la palma* van en ese orden para que los títulos no queden pegados, y las cantidades grandes se abrevian (`462,5K` en vez de `462.537`) para que quepan en su columna.
+
+### 🛠️ Corregido
+- 📏 **El texto ya no se cae debajo de su etiqueta**: en las columnas estrechas de Discord solo entran unos 15 caracteres entre etiqueta y valor, y varias filas de `/cs` (*Mecánica*, *Duelos de apertura*) y de `/rust` (*Farmeo*) se pasaban, así que el dato saltaba a la línea siguiente. Se han acortado las etiquetas, se ha reordenado la parrilla (*Trades* sube a la fila de tres columnas y el impacto por ronda baja a la de dos, que es más ancha) y todas las líneas se han medido para dejar margen.
+
 ## [1.0.0.f1] - 2026-09-02 · 🛠️ fix
 ### 🛠️ Corregido
 - 🔫 **`/rust` culpaba a la privacidad sin motivo**: Steam responde lo mismo (error 400) cuando el perfil oculta las stats que cuando la cuenta no tiene el juego, y el bot soltaba siempre las instrucciones para cambiar la privacidad. Ahora consulta la lista de juegos para saber cuál de los dos es y responde lo que toca: *"esa cuenta no tiene Rust"* o las instrucciones de privacidad.
