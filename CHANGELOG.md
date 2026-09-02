@@ -10,6 +10,10 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
 ---
 
+## [1.0.0.f1] - 2026-09-02 · 🛠️ fix
+### 🛠️ Corregido
+- 🔫 **`/rust` culpaba a la privacidad sin motivo**: Steam responde lo mismo (error 400) cuando el perfil oculta las stats que cuando la cuenta no tiene el juego, y el bot soltaba siempre las instrucciones para cambiar la privacidad. Ahora consulta la lista de juegos para saber cuál de los dos es y responde lo que toca: *"esa cuenta no tiene Rust"* o las instrucciones de privacidad.
+
 ## [1.0.0.f0] - 2026-09-02 · 💥 major
 ### ✨ Añadido
 - 🔫 **Stats de Rust**: `/rust [@usuario|url]` con enlace al perfil de Steam, K/D, horas jugadas, logros, puntería por arma con barra, cómo la palma, caza, farmeo, construcción y curiosidades (notas tocadas, metros a caballo, tiempo irradiado…). Los datos salen de la **Steam Web API**, gratis, que publica ~150 contadores del juego. Además `/rust_vincular` y `/rust_desvincular`.

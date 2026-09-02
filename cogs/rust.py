@@ -78,11 +78,9 @@ class Rust(commands.Cog):
                f"?appid={APPID}&key={config.STEAM_API_KEY}&steamid={steam64}")
         async with session.get(url) as r:
             if r.status == 400:
-                # Steam contesta 400 igual si el perfil es privado que si no tiene el juego
-                return None, 0, ("Steam no me deja ver esas stats. O tiene los **detalles del juego** "
-                                 "en privado, o esa cuenta no juega a Rust.\n"
-                                 "Se arregla en Steam -> Editar perfil -> Privacidad -> "
-                                 "*Detalles del juego: Público*.")
+                # Steam contesta 400 tanto si no tiene el juego como si lo tiene en
+                # privado. Preguntamos por su lista de juegos para saber cual es.
+                return None, 0, await self._porque_400(session, steam64)
             if r.status != 200:
                 return None, 0, f"Steam respondió un error ({r.status}). Prueba más tarde."
             ps = (await r.json()).get("playerstats") or {}
@@ -91,6 +89,30 @@ class Rust(commands.Cog):
         if not stats:
             return None, logros, "Esa cuenta no tiene ninguna estadística de Rust todavía."
         return stats, logros, None
+
+    async def _porque_400(self, session, steam64):
+        """Explica el 400 de Steam: no tiene Rust, o lo tiene pero oculto.
+
+        GetOwnedGames distingue los dos casos: si devuelve la lista de juegos y
+        Rust no esta, es que no lo tiene; si no devuelve nada, es privacidad.
+        """
+        privado = ("Steam no me deja ver esas stats: tiene la **privacidad** de por medio.\n"
+                   "Se arregla en Steam → Editar perfil → Privacidad → *Detalles del juego: Público*.")
+        url = (f"{STEAM_API}/IPlayerService/GetOwnedGames/v1/?key={config.STEAM_API_KEY}"
+               f"&steamid={steam64}&appids_filter[0]={APPID}&format=json")
+        try:
+            async with session.get(url) as r:
+                if r.status != 200:
+                    return privado
+                respuesta = (await r.json()).get("response") or {}
+        except Exception as exc:
+            log.debug("GetOwnedGames falló al diagnosticar: %s", exc)
+            return privado
+        if not respuesta:
+            return privado                      # la lista de juegos esta oculta
+        if not respuesta.get("games"):
+            return "esa cuenta **no tiene Rust**. 🤷"
+        return privado                          # lo tiene, pero con las stats ocultas
 
     async def _horas(self, session, steam64):
         """Horas jugadas a Rust. None si el perfil no lo publica."""
