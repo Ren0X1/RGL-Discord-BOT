@@ -46,6 +46,24 @@ def _juegos_steam(name):
     return juegos
 
 
+_COLORES_ROL_DEFECTO = ("#E74C3C", "#3498DB", "#2ECC71", "#E67E22", "#9B59B6",
+                        "#1ABC9C", "#F1C40F", "#E91E63", "#00BCD4", "#795548")
+
+
+def _colores(name, defecto):
+    """'#E74C3C, 3498DB' -> [0xE74C3C, 0x3498DB]. Si no hay nada, la paleta de serie."""
+    crudo = os.getenv(name, "") or ",".join(defecto)
+    salida = []
+    for trozo in crudo.replace(";", ",").split(","):
+        t = trozo.strip().lstrip("#")
+        if len(t) == 6:
+            try:
+                salida.append(int(t, 16))
+            except ValueError:
+                pass
+    return salida or [int(c.lstrip("#"), 16) for c in defecto]
+
+
 def _bool(name, default=True):
     return os.getenv(name, str(default)).strip().lower() in ("1", "true", "yes", "si", "sí")
 
@@ -194,13 +212,26 @@ AI_SYSTEM_PROMPT = os.getenv("AI_SYSTEM_PROMPT", _AI_PROMPT_DEFECTO)
 # Contexto del servidor (vale para TODOS). Predefinido aquí; editable en vivo con /ia_contexto_server.
 AI_SERVER_CONTEXT = os.getenv("AI_SERVER_CONTEXT", "")
 
-# --- 19) Anuncio de nuevas releases de GitHub --- (se lee de .env.avisos)
-# Uno o varios repos "owner/repo" separados por comas. Ej: "Ren0X1/RGL-Discord-BOT, torvalds/linux"
-GITHUB_RELEASES_REPOS = [r.strip() for r in os.getenv("GITHUB_RELEASES_REPOS", "")
-                         .replace("\n", ",").replace(";", ",").split(",") if "/" in r]
-GITHUB_RELEASES_CHANNEL_ID = _int("GITHUB_RELEASES_CHANNEL_ID")   # canal donde anunciar
-GITHUB_RELEASES_INTERVAL = max(5, _int("GITHUB_RELEASES_INTERVAL", 15))   # minutos entre comprobaciones
+# --- 19) Anuncios de GitHub --- (se lee de .env.avisos)
+# Se vigilan USUARIOS enteros: todos los repos públicos de cada uno, sin tener que
+# listarlos a mano. GITHUB_REPOS queda para añadir repos sueltos de otra gente.
+# Los nombres viejos (GITHUB_RELEASES_*) siguen valiendo para no romper .env antiguos.
+GITHUB_USERS = [u.strip() for u in os.getenv("GITHUB_USERS", "")
+                .replace("\n", ",").replace(";", ",").split(",") if u.strip()]
+GITHUB_REPOS = [r.strip() for r in
+                (os.getenv("GITHUB_REPOS") or os.getenv("GITHUB_RELEASES_REPOS", ""))
+                .replace("\n", ",").replace(";", ",").split(",") if "/" in r]
+GITHUB_CHANNEL_ID = _int("GITHUB_CHANNEL_ID") or _int("GITHUB_RELEASES_CHANNEL_ID")
+GITHUB_INTERVAL = max(5, _int("GITHUB_INTERVAL") or _int("GITHUB_RELEASES_INTERVAL", 15))
+GITHUB_INCLUIR_FORKS = _bool("GITHUB_INCLUIR_FORKS", False)   # los forks suelen ser ruido
+GITHUB_AVISAR_RELEASES = _bool("GITHUB_AVISAR_RELEASES", True)
+GITHUB_AVISAR_COMMITS = _bool("GITHUB_AVISAR_COMMITS", True)   # para los repos que no sacan releases
+GITHUB_AVISAR_DEPLOYS = _bool("GITHUB_AVISAR_DEPLOYS", True)   # Deployments de GitHub (Pages y demás)
+GITHUB_AVISAR_REPOS = _bool("GITHUB_AVISAR_REPOS", True)       # repos nuevos del usuario
+GITHUB_COMMITS_MAX = max(1, _int("GITHUB_COMMITS_MAX", 5))     # commits que se listan por aviso
 GITHUB_RELEASES_MENTION = os.getenv("GITHUB_RELEASES_MENTION", "@everyone")   # qué pingar (vacío = nada)
+GITHUB_COMMITS_MENTION = os.getenv("GITHUB_COMMITS_MENTION", "")   # los commits, por defecto sin pingar
+GITHUB_DEPLOYS_MENTION = os.getenv("GITHUB_DEPLOYS_MENTION", "")   # los despliegues, igual
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")   # opcional: más límite en la API de GitHub
 
 # --- 27) Noticias de Steam --- (se lee de .env.avisos)
@@ -217,6 +248,17 @@ STEAM_NEWS_MAX = max(1, _int("STEAM_NEWS_MAX", 3))         # noticias por juego 
 # no queda rastro. Hora local (TIMEZONE).
 STEAM_NEWS_KEEPALIVE = _bool("STEAM_NEWS_KEEPALIVE", True)
 STEAM_NEWS_KEEPALIVE_HOUR = min(23, max(0, _int("STEAM_NEWS_KEEPALIVE_HOUR", 11)))
+
+# Panel de roles por botón que se mantiene solo: al añadir un juego con
+# /noticias_juego se le crea su rol y se mete en el panel, que se republica.
+# Vacío = apagado (y todo esto es por servidor, no hay ningun ID en el codigo).
+STEAM_NEWS_PANEL = os.getenv("STEAM_NEWS_PANEL", "").strip()          # nombre del panel de /roles_crear
+STEAM_NEWS_PANEL_CANAL_ID = _int("STEAM_NEWS_PANEL_CANAL_ID") or STEAM_NEWS_CHANNEL_ID
+STEAM_NEWS_ROL_AUTO = _bool("STEAM_NEWS_ROL_AUTO", True)              # crear el rol si no se pasa uno
+STEAM_NEWS_ROL_PLANTILLA = _int("STEAM_NEWS_ROL_PLANTILLA")           # rol del que copiar permisos/ajustes
+STEAM_NEWS_ROL_FORMATO = os.getenv("STEAM_NEWS_ROL_FORMATO", "{emoji}︙Noticias {nombre}")
+# Colores que se van repartiendo entre los roles nuevos (hex, por comas).
+STEAM_NEWS_ROL_COLORES = _colores("STEAM_NEWS_ROL_COLORES", _COLORES_ROL_DEFECTO)
 
 # --- 20) Alertas de salud de la máquina (DM al owner) ---
 HEALTH_INTERVAL = max(1, _int("HEALTH_INTERVAL", 5))      # minutos entre comprobaciones

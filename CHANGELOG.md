@@ -10,6 +10,31 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
 ---
 
+## [1.5.0.f0] - 2026-09-07 · ✨ feature
+### ✨ Añadido
+- 🐙 **Se vigilan usuarios de GitHub enteros, no repos sueltos**: se pone `GITHUB_USERS=Ren0X1` en el `.env.avisos` y el bot se baja **todos los repos públicos** de ese usuario y los sigue. Crear un repo nuevo ya no obliga a editar el `.env` ni a reiniciar: aparece solo, y encima se anuncia con un 📁 **Repo nuevo**. `GITHUB_REPOS` se queda para seguir repos de otra gente.
+- 📤 **Avisos de commits**: hay repos que no sacan releases nunca (PibesMecanicos y compañía), así que ahora también se anuncian los **pushes a la rama principal**, agrupados en un solo embed con el hash, el mensaje y el autor de cada commit, y enlace al `compare` de GitHub. Se listan `GITHUB_COMMITS_MAX` (5) y el resto sale como *"y N más"*.
+- 🌐 **Avisos de despliegues**: los *Deployments* de GitHub (Pages, Vercel, lo que sea). El aviso lleva el **estado** (🟢 success / 🔴 failure), la rama, el commit y el **enlace de la web recién publicada**. Los despliegues a medias no se anuncian: se dejan pendientes y se miran en la vuelta siguiente.
+- 🎛️ **Panel de roles de noticias automatizado**: al añadir un juego con `/noticias_juego`, el bot **le crea el rol, lo mete en el panel de reaction roles y republica el panel** él solo. El rol se llama con `STEAM_NEWS_ROL_FORMATO` (por defecto `{emoji}︙Noticias {nombre}` → `⛑️︙Noticias Rust`), o sea **con el emoji que se le pase al comando**, y se **clona de `STEAM_NEWS_ROL_PLANTILLA`**: permisos, si destaca y si se puede mencionar salen de ese rol, y se coloca a su lado. El color va rotando por la paleta `STEAM_NEWS_ROL_COLORES`.
+- 🔄 **`/noticias_panel`**: rehace el panel con todos los juegos vigilados de golpe, creando los roles que falten. Con `limpiar:True` limpia el canal y lo publica de cero.
+- 🔍 **`/github`** fuerza una comprobación al momento (con barrido completo de releases) y **`/github_lista`** enseña los usuarios y repos vigilados con la última tag o commit de cada uno.
+
+### 🧠 Mejorado
+- 📍 **Republicar un panel de roles ya no ensucia el canal**: cada panel recuerda su canal y su mensaje, así que `/roles_publicar` **edita el de siempre**. El panel no se mueve de sitio y nadie se queda con botones huérfanos de paneles viejos. Con `limpiar:True` se borran los mensajes que el bot tuviera sueltos ahí y se publica uno nuevo.
+- ♻️ **Los roles que pone el bot en un panel se marcan como `auto`**: al dejar de vigilar un juego se le quita su botón solo, y las entradas puestas a mano **nunca** se tocan.
+- ✏️ Cambiarle el emoji o el nombre a un juego con `/noticias_juego` ahora **renombra también su rol** (solo si lo creó el bot), además del hilo.
+- 🗑️ `/noticias_borrar` gana `borrar_rol:True`, que se lleva también el rol si lo había creado el bot.
+- ⚙️ **Todo configurable por servidor**: panel, canal del panel, rol plantilla, formato del nombre y paleta de colores viven en `.env.avisos`. No hay ni un ID en el código, así que esto vale tal cual en otro servidor. Con `STEAM_NEWS_PANEL` vacío, la automatización se queda apagada.
+
+### 🐛 Arreglado
+- 🚦 **No se revienta el límite de la API de GitHub**. Sin token son **60 peticiones/hora** y fichar 15 repos preguntando releases + commits + despliegues por cada uno se las comía de una sentada. Ahora la lista de repos del usuario (**una sola petición**) ya dice quién se ha movido por su `pushed_at`, y solo a esos se les mira dentro; un repo recién fichado se apunta y no se le pregunta nada hasta que se mueva. En reposo son 4 peticiones/hora. Las releases se repasan enteras cada 2 h por si alguien publica una desde una tag vieja, que eso no cambia el `pushed_at`.
+
+### 🔧 Interno
+- El cog `releases` pasa a llamarse **`github`** y el estado se muda a `data/github_state.json`. El `releases_state.json` de antes **se migra solo**, conservando la tag de cada repo para no reanunciar nada.
+- Los nombres viejos `GITHUB_RELEASES_REPOS`, `GITHUB_RELEASES_CHANNEL_ID` y `GITHUB_RELEASES_INTERVAL` **siguen valiendo**, para que un `.env` antiguo no se rompa.
+
+---
+
 ## [1.4.0.f0] - 2026-09-06 · ✨ feature
 ### ✨ Añadido
 - 🧵 **Los hilos de noticias ya no se archivan**: Discord cierra un hilo si nadie habla en él (7 días como mucho) y entonces desaparece de la lista del canal. Ahora, **cada día a las 11:00** (`STEAM_NEWS_KEEPALIVE_HOUR`, hora de `TIMEZONE`), el bot pasa por todos los hilos, **desarchiva** el que se hubiera cerrado, suelta un mensaje y **lo borra al momento**: cuenta como actividad, así que el contador de archivado vuelve a cero, y no queda rastro en el hilo. Se puede apagar con `STEAM_NEWS_KEEPALIVE=false` y probar a mano con `/noticias mantener:True`.

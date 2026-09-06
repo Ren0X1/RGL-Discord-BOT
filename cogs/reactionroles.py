@@ -12,6 +12,14 @@ Se configura TODO por comandos y se guarda en data/reaction_roles.json:
 Los botones son persistentes (custom_id "rr:<rol_id>"), así que siguen
 funcionando después de reiniciar el bot. Al pulsar: si no tienes el rol te lo
 pone, y si lo tienes te lo quita.
+
+Cada panel recuerda dónde se publicó (canal y mensaje), así que republicarlo
+EDITA el mensaje de siempre en vez de soltar otro debajo: el panel no se mueve
+de sitio y la peña no pierde los botones. Si el mensaje ya no existe, se limpian
+los mensajes que el bot tuviera sueltos en ese canal y se publica uno nuevo.
+
+Otros cogs pueden mantener un panel solos: `steamnews` usa `asegurar_rol()` y
+`republicar()` para meter en el panel el rol de cada juego que se añade.
 """
 
 import os
@@ -46,6 +54,50 @@ def _guardar(d):
 
 def _paneles(gid):
     return _cargar().get(str(gid), {})
+
+
+def obtener_panel(gid, nombre):
+    """El panel tal cual está guardado, o None. Para que lo usen otros cogs."""
+    return _paneles(gid).get((nombre or "").lower())
+
+
+def asegurar_rol(gid, panel, rol_id, emoji=None, etiqueta=None, auto=False):
+    """Mete un rol en un panel si no estaba. Devuelve True si ha cambiado algo.
+
+    No pisa lo que ya hubiera: si el rol ya está, se respeta el emoji y la
+    etiqueta que le pusieran a mano.
+    """
+    d = _cargar()
+    p = d.get(str(gid), {}).get(panel.lower())
+    if p is None:
+        return False
+    if any(r["id"] == rol_id for r in p.get("roles", [])):
+        return False
+    if len(p.get("roles", [])) >= 25:
+        log.warning("El panel %s ya tiene 25 roles, no cabe %s", panel, rol_id)
+        return False
+    entrada = {"id": rol_id, "emoji": (emoji or "").strip() or None,
+               "etiqueta": (etiqueta or "rol")[:80]}
+    if auto:
+        entrada["auto"] = True      # lo puso un cog, se puede quitar solo
+    p.setdefault("roles", []).append(entrada)
+    _guardar(d)
+    return True
+
+
+def quitar_rol(gid, panel, rol_id, solo_auto=True):
+    """Saca un rol del panel. Con solo_auto, no toca los que se pusieron a mano."""
+    d = _cargar()
+    p = d.get(str(gid), {}).get(panel.lower())
+    if p is None:
+        return False
+    quedan = [r for r in p.get("roles", [])
+              if r["id"] != rol_id or (solo_auto and not r.get("auto"))]
+    if len(quedan) == len(p.get("roles", [])):
+        return False
+    p["roles"] = quedan
+    _guardar(d)
+    return True
 
 
 class BotonRol(discord.ui.DynamicItem[discord.ui.Button], template=r"rr:(?P<rol>\d+)"):
@@ -94,6 +146,63 @@ class ReactionRoles(commands.Cog):
         d = _cargar()
         d.setdefault(str(gid), {})[nombre.lower()] = panel
         _guardar(d)
+
+    # ---------- construir y publicar ----------
+    def _vista(self, p):
+        vista = discord.ui.View(timeout=None)
+        for i, r in enumerate(p.get("roles", [])):
+            vista.add_item(BotonRol(r["id"], r.get("etiqueta") or "rol",
+                                    r.get("emoji"), _COLORES[i % len(_COLORES)]))
+        return vista
+
+    def _embed(self, p):
+        return discord.Embed(title=p.get("titulo") or "Elige tus roles",
+                             description=p.get("descripcion") or "", color=0x5865F2)
+
+    async def publicar_panel(self, guild, nombre, canal=None, limpiar=False):
+        """Publica o actualiza un panel. Devuelve el mensaje, o None si no pudo.
+
+        Si el panel ya se publicó y el mensaje sigue vivo, se EDITA: así no se
+        mueve de sitio ni se llena el canal de paneles viejos. Si no está (o se
+        pide `limpiar`), se borran los mensajes que el bot tenga sueltos en ese
+        canal y se publica uno nuevo.
+        """
+        p = self._panel(guild.id, nombre)
+        if not p or not p.get("roles"):
+            return None
+        destino = canal
+        if destino is None and p.get("canal_id"):
+            destino = guild.get_channel(p["canal_id"])
+        if destino is None:
+            return None
+
+        emb, vista = self._embed(p), self._vista(p)
+        mismo_canal = p.get("canal_id") == destino.id
+        if not limpiar and mismo_canal and p.get("mensaje_id"):
+            try:
+                msg = await destino.fetch_message(p["mensaje_id"])
+                await msg.edit(embed=emb, view=vista)
+                return msg
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException) as exc:
+                log.info("El mensaje del panel %s ya no vale (%s), publico otro", nombre, exc)
+
+        # Limpieza: fuera los mensajes que el bot tenga por ahí en ese canal, que
+        # son paneles viejos. Los de otra gente no se tocan.
+        try:
+            async for msg in destino.history(limit=100):
+                if msg.author.id == self.bot.user.id:
+                    await msg.delete()
+        except (discord.Forbidden, discord.HTTPException) as exc:
+            log.info("No pude limpiar %s: %s", destino, exc)
+
+        try:
+            msg = await destino.send(embed=emb, view=vista)
+        except discord.HTTPException as exc:
+            log.warning("No pude publicar el panel %s: %s", nombre, exc)
+            return None
+        p["canal_id"], p["mensaje_id"] = destino.id, msg.id
+        self._set_panel(guild.id, nombre, p)
+        return msg
 
     # ---------- comandos ----------
     @app_commands.command(name="roles_crear", description="Crea un panel de roles por botón")
@@ -182,9 +291,10 @@ class ReactionRoles(commands.Cog):
         await interaction.response.send_message("\n\n".join(lineas)[:1900], ephemeral=True)
 
     @app_commands.command(name="roles_publicar", description="Publica un panel con sus botones")
-    @app_commands.describe(panel="Nombre del panel", canal="Dónde publicarlo (vacío = aquí)")
+    @app_commands.describe(panel="Nombre del panel", canal="Dónde publicarlo (vacío = aquí)",
+                           limpiar="Borra los mensajes del bot en el canal y publica uno nuevo")
     async def roles_publicar(self, interaction: discord.Interaction, panel: str,
-                             canal: discord.TextChannel = None):
+                             canal: discord.TextChannel = None, limpiar: bool = False):
         if not self._es_admin(interaction):
             await interaction.response.send_message("Necesitas **Gestionar roles**.", ephemeral=True)
             return
@@ -198,18 +308,14 @@ class ReactionRoles(commands.Cog):
                 f"El panel `{panel}` no tiene roles. Añádelos con `/roles_add {panel} <rol>`.", ephemeral=True)
             return
         destino = canal or interaction.channel
-        vista = discord.ui.View(timeout=None)
-        for i, r in enumerate(p["roles"]):
-            vista.add_item(BotonRol(r["id"], r.get("etiqueta") or "rol",
-                                    r.get("emoji"), _COLORES[i % len(_COLORES)]))
-        e = discord.Embed(title=p.get("titulo") or "Elige tus roles",
-                          description=p.get("descripcion") or "", color=0x5865F2)
-        try:
-            await destino.send(embed=e, view=vista)
-        except discord.HTTPException as exc:
-            await interaction.response.send_message(f"No pude publicarlo: {exc}", ephemeral=True)
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        msg = await self.publicar_panel(interaction.guild, panel, destino, limpiar=limpiar)
+        if msg is None:
+            await interaction.followup.send("No pude publicarlo, mira los logs.", ephemeral=True)
             return
-        await interaction.response.send_message(f"✅ Panel `{panel}` publicado en {destino.mention}.", ephemeral=True)
+        await interaction.followup.send(
+            f"✅ Panel `{panel}` {'republicado' if limpiar else 'actualizado'} en "
+            f"{destino.mention}. {msg.jump_url}", ephemeral=True)
 
     @app_commands.command(name="roles_borrar", description="Borra un panel de roles")
     @app_commands.describe(panel="Nombre del panel")

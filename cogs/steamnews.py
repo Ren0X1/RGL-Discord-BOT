@@ -58,6 +58,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 import config
+from cogs import reactionroles as rr
 
 log = logging.getLogger("steamnews")
 
@@ -247,6 +248,7 @@ class SteamNews(commands.Cog):
                 "rol": int(j.get("rol") or 0),
                 "nombre": str(j.get("nombre") or f"App {appid}"),
                 "emoji": str(j.get("emoji") or "📰"),
+                "rol_auto": bool(j.get("rol_auto")),
             })
         return juegos
 
@@ -270,6 +272,99 @@ class SteamNews(commands.Cog):
             if j["appid"] == appid:
                 return j
         return None
+
+    def _fijar_juego(self, juego):
+        """Guarda el juego en data/steam_juegos.json (manda sobre el .env.avisos)."""
+        self._juegos = ([j for j in self._juegos if j["appid"] != juego["appid"]]
+                        + [dict(juego)])
+        self._guardar_juegos()
+
+    # ------------------------------------------ rol y panel de cada juego
+    def _nombre_rol(self, juego):
+        return config.STEAM_NEWS_ROL_FORMATO.format(
+            emoji=juego["emoji"], nombre=juego["nombre"], appid=juego["appid"])[:100]
+
+    async def _asegurar_rol(self, guild, juego):
+        """El rol de noticias del juego, creándolo si no lo hay. None si no se puede.
+
+        El rol se clona de STEAM_NEWS_ROL_PLANTILLA (permisos, si destaca y si se
+        puede mencionar) y coge un color de la paleta STEAM_NEWS_ROL_COLORES; el
+        nombre sale de STEAM_NEWS_ROL_FORMATO, así que lleva el emoji del juego.
+        """
+        rol = guild.get_role(juego.get("rol") or 0)
+        deseado = self._nombre_rol(juego)
+        if rol is not None:
+            # Si el rol lo creamos nosotros y luego cambian el emoji o el nombre
+            # del juego, el rol se renombra solo. Los puestos a mano no se tocan.
+            if juego.get("rol_auto") and rol.name != deseado:
+                try:
+                    await rol.edit(name=deseado, reason="Cambió el nombre del juego")
+                except (discord.Forbidden, discord.HTTPException) as exc:
+                    log.info("No pude renombrar el rol de %s: %s", juego["nombre"], exc)
+            return rol
+        if not config.STEAM_NEWS_ROL_AUTO:
+            return None
+
+        plantilla = guild.get_role(config.STEAM_NEWS_ROL_PLANTILLA or 0)
+        paleta = config.STEAM_NEWS_ROL_COLORES
+        usados = sum(1 for j in self.juegos() if j.get("rol_auto"))
+        datos = {"name": deseado, "colour": discord.Colour(paleta[usados % len(paleta)]),
+                 "mentionable": True, "hoist": False,
+                 "permissions": discord.Permissions.none(),
+                 "reason": "Rol de noticias de " + juego["nombre"]}
+        if plantilla is not None:
+            datos.update(permissions=plantilla.permissions, hoist=plantilla.hoist,
+                         mentionable=plantilla.mentionable)
+        try:
+            rol = await guild.create_role(**datos)
+        except (discord.Forbidden, discord.HTTPException) as exc:
+            log.warning("No pude crear el rol de %s: %s", juego["nombre"], exc)
+            return None
+        if plantilla is not None:       # que quede pegado a los de su familia
+            try:
+                await rol.edit(position=max(1, plantilla.position))
+            except (discord.Forbidden, discord.HTTPException) as exc:
+                log.info("No pude colocar el rol de %s: %s", juego["nombre"], exc)
+        juego["rol"], juego["rol_auto"] = rol.id, True
+        self._fijar_juego(juego)
+        log.info("Rol %s creado para %s", rol.id, juego["nombre"])
+        return rol
+
+    async def _sincronizar_panel(self, guild, forzar=False, limpiar=False):
+        """Roles que falten + panel al día + republicado. Devuelve (creados, mensaje)."""
+        if guild is None or not config.STEAM_NEWS_PANEL:
+            return 0, None
+        cog = self.bot.get_cog("ReactionRoles")
+        if cog is None:
+            log.warning("El cog de reaction roles no está cargado, no toco el panel.")
+            return 0, None
+
+        creados, cambios, vivos = 0, False, set()
+        for juego in sorted(self.juegos(), key=lambda j: j["nombre"].lower()):
+            tenia = bool(juego.get("rol"))
+            rol = await self._asegurar_rol(guild, juego)
+            if rol is None:
+                continue
+            if not tenia:
+                creados += 1
+            vivos.add(rol.id)
+            if rr.asegurar_rol(guild.id, config.STEAM_NEWS_PANEL, rol.id,
+                               juego["emoji"], juego["nombre"], auto=True):
+                cambios = True
+
+        # Los que metimos nosotros y ya no corresponden a ningún juego, fuera.
+        panel = rr.obtener_panel(guild.id, config.STEAM_NEWS_PANEL) or {}
+        for entrada in list(panel.get("roles", [])):
+            if entrada.get("auto") and entrada["id"] not in vivos:
+                if rr.quitar_rol(guild.id, config.STEAM_NEWS_PANEL, entrada["id"]):
+                    cambios = True
+
+        msg = None
+        if cambios or creados or forzar:
+            canal = guild.get_channel(config.STEAM_NEWS_PANEL_CANAL_ID)
+            msg = await cog.publicar_panel(guild, config.STEAM_NEWS_PANEL, canal,
+                                           limpiar=limpiar)
+        return creados, msg
 
     # --------------------------------------------------------------- API
     async def _noticias(self, session, appid):
@@ -637,6 +732,11 @@ class SteamNews(commands.Cog):
             guardado.update(date=noticias[0].get("date") or 0, gid=noticias[0].get("gid"))
         self._guardar()
 
+        # Rol + panel de roles antes de estrenar el hilo, para que el mensaje de
+        # presentación ya enseñe el rol bueno.
+        creados, panel_msg = await self._sincronizar_panel(interaction.guild)
+        juego = self._juego(appid) or juego
+
         canal = self.bot.get_channel(config.STEAM_NEWS_CHANNEL_ID)
         hilo = None
         if canal is not None:
@@ -661,6 +761,14 @@ class SteamNews(commands.Cog):
             value=(f"{len(noticias)} en el feed · se publicará la próxima que saquen"
                    if noticias else "ninguno todavía; se publicará lo que saquen"),
             inline=False)
+        if config.STEAM_NEWS_PANEL:
+            e.add_field(
+                name="🎛️ Panel de roles",
+                value=((f"Rol **creado** y panel `{config.STEAM_NEWS_PANEL}` actualizado"
+                        if creados else f"Panel `{config.STEAM_NEWS_PANEL}` actualizado")
+                       + (f" · {panel_msg.jump_url}" if panel_msg else
+                          " · *(no pude republicarlo, mira los logs)*")),
+                inline=False)
         e.set_footer(text="Guardado en data/steam_juegos.json · no hace falta reiniciar el bot")
         await interaction.followup.send(embed=e,
                                         allowed_mentions=discord.AllowedMentions.none())
@@ -668,9 +776,10 @@ class SteamNews(commands.Cog):
     @app_commands.command(name="noticias_borrar",
                           description="Solo staff: deja de vigilar un juego de Steam")
     @app_commands.describe(appid="App ID del juego que se deja de vigilar",
-                           borrar_hilo="Borra también el hilo con todas sus noticias")
+                           borrar_hilo="Borra también el hilo con todas sus noticias",
+                           borrar_rol="Borra también el rol, si lo creó el bot")
     async def noticias_borrar(self, interaction: discord.Interaction, appid: int,
-                              borrar_hilo: bool = False):
+                              borrar_hilo: bool = False, borrar_rol: bool = False):
         if not self._staff(interaction):
             await interaction.response.send_message("Esto es cosa del staff.", ephemeral=True)
             return
@@ -703,8 +812,55 @@ class SteamNews(commands.Cog):
                 nota = " El hilo no he podido borrarlo, bórralo a mano."
         elif guardado.get("hilo"):
             nota = " El hilo se queda con lo que ya se publicó."
+
+        # Fuera del panel de roles, y el rol también si lo creamos nosotros.
+        if juego.get("rol") and juego.get("rol_auto") and borrar_rol:
+            rol = interaction.guild.get_role(juego["rol"])
+            if rol is not None:
+                try:
+                    await rol.delete(reason="Juego quitado de las noticias")
+                    nota += " El rol también."
+                except (discord.Forbidden, discord.HTTPException) as exc:
+                    log.info("No pude borrar el rol de %s: %s", juego["nombre"], exc)
+                    nota += " El rol no he podido borrarlo."
+        _, panel_msg = await self._sincronizar_panel(interaction.guild, forzar=True)
+        if config.STEAM_NEWS_PANEL and panel_msg:
+            nota += f" Panel `{config.STEAM_NEWS_PANEL}` actualizado."
+
         await interaction.followup.send(
             f"Dejo de vigilar **{juego['nombre']}** (`{appid}`).{nota}")
+
+    @app_commands.command(
+        name="noticias_panel",
+        description="Solo staff: rehace el panel de roles con todos los juegos vigilados")
+    @app_commands.describe(
+        limpiar="Borra los mensajes del bot en el canal y publica el panel de cero")
+    async def noticias_panel(self, interaction: discord.Interaction, limpiar: bool = False):
+        if not self._staff(interaction):
+            await interaction.response.send_message("Esto es cosa del staff.", ephemeral=True)
+            return
+        if not config.STEAM_NEWS_PANEL:
+            await interaction.response.send_message(
+                "Falta `STEAM_NEWS_PANEL` en el `.env.avisos`: ahí va el nombre del "
+                "panel de `/roles_crear` que quieres que se mantenga solo.", ephemeral=True)
+            return
+        if rr.obtener_panel(interaction.guild.id, config.STEAM_NEWS_PANEL) is None:
+            await interaction.response.send_message(
+                f"No existe el panel `{config.STEAM_NEWS_PANEL}`. Créalo antes con "
+                f"`/roles_crear {config.STEAM_NEWS_PANEL}`.", ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        creados, msg = await self._sincronizar_panel(interaction.guild, forzar=True,
+                                                     limpiar=limpiar)
+        juegos = self.juegos()
+        if msg is None:
+            await interaction.followup.send(
+                "No he podido publicar el panel. Comprueba `STEAM_NEWS_PANEL_CANAL_ID` "
+                "y que tengo permisos ahí.")
+            return
+        await interaction.followup.send(
+            f"✅ Panel `{config.STEAM_NEWS_PANEL}` al día con **{len(juegos)}** juegos "
+            f"(roles creados: **{creados}**).\n{msg.jump_url}")
 
     @app_commands.command(name="noticias_lista",
                           description="Solo staff: juegos vigilados en las noticias de Steam")

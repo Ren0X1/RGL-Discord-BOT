@@ -5,7 +5,7 @@ Raspberry Pi Zero 2 W. Servidor privado de colegas ("la man cave"): gamers de
 Counter-Strike y Rust, humor de cachondeo entre amigos.
 
 - **Repo**: https://github.com/Ren0X1/RGL-Discord-BOT (rama `main`)
-- **Versión actual**: 1.4.0.f0
+- **Versión actual**: 1.5.0.f0
 - **Autor**: Ren0X1 (renox) — responder siempre **en español**, directo y sin florituras.
 
 > Este fichero es el manual del proyecto y **entra en los backups automáticos**
@@ -168,7 +168,7 @@ discord-bot/
 | Fichero | Qué lleva |
 |---|---|
 | `.env` | Token, IDs de canales, IA, niveles, tickets, backups, claves de API… |
-| `.env.avisos` | Solo lo que el bot **vigila**: repos de GitHub y juegos de Steam |
+| `.env.avisos` | Solo lo que el bot **vigila**: usuarios de GitHub y juegos de Steam (con su panel de roles) |
 
 Se separaron porque las listas de repos y juegos crecen y ensuciaban el `.env`.
 `config.py` carga los dos (`load_dotenv()` + `load_dotenv(.env.avisos)`); si el
@@ -178,7 +178,7 @@ segundo no existe, esas funciones simplemente quedan apagadas. Las plantillas so
 ### `data/` — estado persistente (nada de esto va a git)
 `ai_context.json`, `ai_saved.json`, `ai_state.json`, `steam_links.json`,
 `steam_news.json`, `steam_juegos.json`, `levels.db`, `polls.db`, `reminders.db`, `tickets.db`,
-`reaction_roles.json`, `releases_state.json`,
+`reaction_roles.json`, `github_state.json`,
 `gdrive_token.json`, `gdrive_client.json`
 
 ---
@@ -194,6 +194,7 @@ segundo no existe, esas funciones simplemente quedan apagadas. Las plantillas so
 | `botinfo` | `/bot` (versión, uptime, latencia, host) + resumen del sistema al arrancar. |
 | `csstats` | `/cs`, `/cs_vincular`, `/cs_desvincular`, `/cs_comparar` (API de Leetify). |
 | `events` | `/evento` con imagen y avisos con antelación. |
+| `github` | Vigila **usuarios** de GitHub: releases, commits y despliegues de todos sus repos. Ver sección propia. |
 | `health` | Vigila temperatura/RAM/disco y avisa por DM al owner. |
 | `levels` | XP por participar, `/rank`, `/leaderboard`, `/xp_dar`, `/xp_reset`. |
 | `logs` | Registro de auditoría estilo MEE6. |
@@ -201,7 +202,6 @@ segundo no existe, esas funciones simplemente quedan apagadas. Las plantillas so
 | `owner_notify` | DM al owner cuando arranca el bot. |
 | `polls` | `/encuesta` con botones persistentes. |
 | `reactionroles` | Paneles de roles por botón, configurables por comando. |
-| `releases` | Anuncia nuevas releases de repos de GitHub. Config en `.env.avisos`. |
 | `reminders` | `/recordatorio`, `/recordatorios`, `/cancelar_recordatorio`. |
 | `rust` | `/rust`, `/rust_vincular`, `/rust_desvincular`, `/rust_comparar` (Steam Web API). |
 | `scrim` | `/scrim` reparte equipos, `/equipos` los anuncia. |
@@ -301,8 +301,33 @@ pestaña de novedades de Steam (parches, devblogs, eventos).
 |---|---|
 | `/noticias` | Fuerza una comprobación. `forzar:True` republica la última aunque ya se viera; `mantener:True` lanza el keep-alive a mano (para probarlo sin esperar a las 11). |
 | `/noticias_juego` | **Añade o actualiza un juego por App ID**. Parámetros: `appid` (obligatorio), `rol`, `nombre`, `emoji`. Valida el App ID contra la tienda de Steam y coge de ahí el nombre si no se lo das; crea el hilo, lo estrena y apunta por dónde va el feed **sin publicar el histórico**. |
-| `/noticias_borrar` | Deja de vigilar un juego (autocompletado con los que hay). `borrar_hilo:True` se lleva también el hilo. |
+| `/noticias_borrar` | Deja de vigilar un juego (autocompletado con los que hay). `borrar_hilo:True` se lleva también el hilo; `borrar_rol:True`, el rol si lo creó el bot. |
+| `/noticias_panel` | Rehace el panel de roles con todos los juegos: crea los roles que falten y lo republica. `limpiar:True` lo publica de cero. |
 | `/noticias_lista` | Los juegos vigilados: App ID, de dónde sale cada uno, rol, hilo y cuándo fue su última noticia. |
+
+### Panel de roles automático
+Al añadir un juego con `/noticias_juego` el bot **le crea su rol y lo mete en el
+panel de reaction roles**, que republica solo. La peña no tiene que esperar a que
+nadie le prepare nada, y el staff no toca `/roles_add` ni una vez.
+
+- El rol se llama con `STEAM_NEWS_ROL_FORMATO` (por defecto
+  `{emoji}︙Noticias {nombre}` → `⛑️︙Noticias Rust`), así que **lleva el emoji que
+  se le pase al comando**. Si luego se cambia el emoji o el nombre del juego, el
+  rol se renombra solo (solo los que creó el bot; los puestos a mano no se tocan).
+- Se **clona de `STEAM_NEWS_ROL_PLANTILLA`**: permisos, si destaca en la lista y
+  si se puede mencionar salen de ese rol, y se coloca a su lado. El color va
+  rotando por `STEAM_NEWS_ROL_COLORES`.
+- El botón entra en el panel `STEAM_NEWS_PANEL` con el emoji y el nombre del
+  juego. Las entradas que pone el bot se marcan con `auto` en el JSON: al borrar
+  un juego se le quita el botón, y las entradas hechas a mano nunca se tocan.
+- **Republicar edita el mensaje de siempre**, no manda otro: el panel no se mueve
+  y nadie se queda con botones huérfanos. Si el mensaje ya no existe, se limpian
+  los mensajes del bot en ese canal y se publica uno nuevo.
+- `/noticias_panel` rehace todo de golpe (útil la primera vez, para que los
+  juegos que ya había entren en el panel). Con `limpiar:True` republica de cero.
+- Nada de esto lleva IDs en el código: **todo va en `.env.avisos`**, así que otro
+  servidor solo tiene que poner su panel, su canal y su rol plantilla. Con
+  `STEAM_NEWS_PANEL` vacío, esta parte queda apagada.
 
 ### De dónde salen los juegos (dos sitios)
 1. `STEAM_NEWS_JUEGOS` en `.env.avisos`: `appid:ID_DEL_ROL:Nombre[:emoji]` por comas.
@@ -312,6 +337,49 @@ Se fusionan por appid y **manda el del comando** (es lo último que se tocó). E
 cog arranca aunque no haya ningún juego, para poder añadirlos en caliente sin
 reiniciar. Cambiar el nombre o el emoji con `/noticias_juego` **renombra el hilo**
 en la vuelta siguiente. Al vivir en `data/`, la lista entra en los backups.
+
+---
+
+## `github` — releases, commits y despliegues
+
+Vigila **usuarios**, no repos sueltos: se pone `GITHUB_USERS=Ren0X1` y el bot se
+baja todos sus repos públicos y los sigue. Al crear un repo nuevo no hay que
+tocar nada. `GITHUB_REPOS` queda para repos de otra gente.
+
+Qué publica en `GITHUB_CHANNEL_ID`:
+
+| Aviso | Cuándo | Pinga |
+|---|---|---|
+| 🚀 **Release** | tag nueva en `releases/latest` | `GITHUB_RELEASES_MENTION` (@everyone) |
+| 📤 **Commits** | push a la rama por defecto; se agrupan en un solo embed | `GITHUB_COMMITS_MENTION` (vacío) |
+| 🌐 **Despliegue** | un *Deployment* de GitHub termina (Pages, Vercel…) | `GITHUB_DEPLOYS_MENTION` (vacío) |
+| 📁 **Repo nuevo** | aparece un repo que no estaba | `GITHUB_COMMITS_MENTION` |
+
+Los commits están porque **hay repos que no sacan releases** (PibesMecanicos
+publica web y no etiqueta nada). Los despliegues son la otra mitad de lo mismo:
+el aviso lleva el estado (🟢/🔴) y el enlace de la web que se acaba de publicar.
+
+### Cómo no se pasa del límite de la API
+Sin token, GitHub da **60 peticiones/hora**. La lista de repos de un usuario ya
+trae el `pushed_at` de cada uno, así que **una sola petición** dice qué repos se
+han movido, y solo a esos se les mira dentro. En reposo son 4 peticiones/hora.
+
+- Un repo **recién fichado** se apunta y ya: no se le pregunta nada hasta que se
+  mueva. Si no, las 15 primeras consultas se cargaban la cuota de la hora.
+- Cada `BARRIDO_MIN` (2 h) se repasan las releases de todos por si alguien
+  publica una desde una tag vieja, que eso no cambia el `pushed_at`.
+- `GITHUB_TOKEN` (un token personal sin ningún permiso) sube el límite a 5000/h.
+
+### Nada de histórico
+La primera vez que se ve algo se apunta el estado **sin anunciarlo**. Estado en
+`data/github_state.json`; el `releases_state.json` de antes se migra solo
+conservando la tag de cada repo.
+
+### Comandos (staff, `manage_guild`, efímeros)
+| Comando | Qué hace |
+|---|---|
+| `/github` | Fuerza una comprobación ya, con barrido completo de releases. |
+| `/github_lista` | Usuarios y repos vigilados, con la última tag o commit de cada uno. |
 
 ---
 
@@ -453,6 +521,15 @@ el script y no interesa tenerlas dentro del propio backup.
     días sin actividad y desaparecen del canal. De ahí el keep-alive diario.
 15. **Embed sin imagen** → Discord lo estrecha al texto más largo y el mismo
     contenido ocupa el doble de alto. Si no hay foto, espaciador transparente.
+16. **Fichar 15 repos preguntándole a GitHub por cada uno** → la API sin token da
+    **60 peticiones/hora** y la primera vuelta se las comía enteras (releases +
+    commits + despliegues × 15). Un repo recién visto se apunta y punto: no se le
+    pregunta nada hasta que se mueva.
+17. **Vigilar repos uno a uno en el `.env`** → cada repo nuevo obligaba a editar
+    el fichero y reiniciar. Se vigila el **usuario** entero.
+18. **Republicar un panel de roles mandando otro mensaje** → el canal se llenaba
+    de paneles viejos con botones que seguían funcionando. El panel recuerda su
+    mensaje y se **edita**.
 
 ---
 
@@ -462,4 +539,4 @@ el script y no interesa tenerlas dentro del propio backup.
 - Transcripts al cerrar tickets.
 - Sistema de avisos (`/warn`, `/warnings`).
 - Alertas de salud ampliadas (autoreinicio / healthcheck).
-- Anuncios de GitHub para commits, PRs e issues (ahora solo releases).
+- Anuncios de GitHub para PRs e issues (ya están releases, commits y despliegues).
