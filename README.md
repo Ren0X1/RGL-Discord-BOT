@@ -1,166 +1,179 @@
-# RGL Discord BOT
+# 🤖 RGL Discord BOT
 
-Bot de Discord **todo-en-uno** con **panel web de control**, autoalojado en una **Raspberry Pi Zero 2 W**. Incluye moderación, registro de auditoría, recordatorios, eventos, encuestas, sistema de tickets, canales-contador, scrims, y un panel web con tema "hacker" para administrar el bot y la máquina desde el navegador (también en remoto).
+![Python](https://img.shields.io/badge/Python-3.13-3776AB?style=flat-square&logo=python&logoColor=white) ![discord.py](https://img.shields.io/badge/discord.py-2.7-5865F2?style=flat-square&logo=discord&logoColor=white) ![Flask](https://img.shields.io/badge/Flask-3.1-000000?style=flat-square&logo=flask&logoColor=white) ![SQLite](https://img.shields.io/badge/SQLite-3-003B57?style=flat-square&logo=sqlite&logoColor=white) ![Raspberry Pi](https://img.shields.io/badge/Raspberry%20Pi-Zero%202%20W-A22846?style=flat-square&logo=raspberrypi&logoColor=white) ![Google Drive](https://img.shields.io/badge/Google%20Drive-backups-4285F4?style=flat-square&logo=googledrive&logoColor=white) ![Tailscale](https://img.shields.io/badge/Tailscale-remote%20access-242424?style=flat-square&logo=tailscale&logoColor=white)
+
+**All-in-one Discord bot with a web control panel**, self-hosted on a **Raspberry Pi Zero 2 W**. It runs a whole private gaming server: moderation and audit logs, reminders, events, polls, tickets, XP levels, counter channels, scrims, CS2 and Rust stats, Steam news, an AI that chats like one of the group, and automatic backups to Google Drive — plus a hacker-themed web panel to manage the bot **and the machine** from any browser, remotely included.
 
 ---
 
-## 🧰 Tecnologías
+## 🧰 Tech stack
 
-| Área | Tecnología |
+| Area | Technology |
 |------|------------|
-| Lenguaje | Python 3.13 |
-| Bot | [discord.py](https://discordpy.readthedocs.io/) 2.7 (slash commands, botones, vistas persistentes) |
-| Panel web | Flask 3 · waitress (HTTP) · werkzeug TLS (HTTPS) |
-| Base de datos | SQLite (recordatorios, encuestas, tickets) |
-| Config | python-dotenv (`.env`) |
-| Iconos | Pillow (favicon e iconos PWA) |
-| Frontend panel | HTML + CSS + JS vanilla (gráficas en `<canvas>`, sin dependencias) |
-| Servicios | systemd (`discordbot`, `panel`, `bot-startup`) |
-| Despliegue | Git (sincronización desde GitHub) + scripts de arranque/actualización |
-| Acceso remoto | Tailscale (VPN WireGuard, sin abrir puertos) |
+| Language | Python 3.13 |
+| Bot | [discord.py](https://discordpy.readthedocs.io/) 2.7 (slash commands, buttons, persistent views) |
+| Web panel | Flask 3 · waitress (HTTP) · werkzeug TLS (HTTPS) |
+| Database | SQLite (levels, reminders, polls, tickets) |
+| State | JSON files under `data/` (AI memory, Steam links, news, reaction roles) |
+| Config | python-dotenv — `.env` + `.env.avisos` |
+| Panel frontend | Vanilla HTML + CSS + JS (charts drawn on `<canvas>`, zero dependencies) |
+| AI | Any OpenAI-compatible API — [Groq](https://groq.com/) by default (free, no card) |
+| Backups | Google Drive API (OAuth, user account) |
+| Services | systemd — `discordbot`, `panel`, `bot-startup` |
+| Deployment | Git (the Pi syncs itself from GitHub) + startup/update scripts |
+| Remote access | Tailscale (WireGuard VPN, no ports opened) |
 | Hardware | Raspberry Pi Zero 2 W (Raspberry Pi OS) |
 
 ---
 
-## 🤖 Funcionalidades del bot
+## 🎮 What the bot does
 
-Cada función vive en su propio *cog* dentro de `cogs/`:
+Every feature lives in its own *cog* inside `cogs/`:
 
-- **Registro de auditoría** (`logs`) — estilo MEE6: mensajes borrados/editados, entradas y salidas, baneos/desbaneos (con el moderador vía audit log), cambios de apodo, roles, avatar y nombre, creación/borrado de canales y movimientos de voz (opcional).
-- **Canales de voz temporales** (`tempvoice`) — al entrar a un canal "lobby" se crea un canal de voz propio que se borra al quedarse vacío.
-- **Recordatorios** (`reminders`) — `/recordatorio`, `/recordatorios`, `/cancelar_recordatorio`. Avisa por privado en la fecha indicada; persisten en SQLite.
-- **Avisos de directos** (`streams`) — anuncia cuando un miembro con cierto rol empieza a emitir en Twitch.
-- **Eventos** (`events`) — `/evento` crea eventos del servidor con rango de fechas, imagen de portada y avisos automáticos antes de empezar/terminar.
-- **Moderación** (`moderation`) — `/clear` borra en bloque los últimos N mensajes (evita el límite de Discord con mensajes antiguos).
-- **Estado** (`stats`) — `/stats` muestra latencia, uptime, CPU, RAM, temperatura y disco de la Pi.
-- **Bienvenidas** (`welcome`) — mensaje de bienvenida/despedida y asignación de autorol a los nuevos.
-- **Scrims y equipos** (`scrim`) — `/scrim` reparte al azar a la gente de un canal de voz en dos equipos y los **mueve**; `/equipos` solo **anuncia** los equipos sin mover.
-- **Auto-reacción** (`autoreact`) — reacciona con un emoji al azar a los mensajes de quien tenga un rol concreto, a ~1 de cada 10 mensajes (configurable con `REACT_CHANCE`). Usa caras por defecto y, si se quiere, los emojis del servidor.
-- **Aviso al owner** (`owner_notify`) — manda un DM al dueño cuando el bot arranca (útil para saber que se ha reiniciado tras un corte de luz).
-- **Información** (`serverinfo`) — `/serverinfo` (datos del servidor) y `/userinfo` (datos de un usuario).
-- **Canales-contador** (`serverstats`) — dos canales de voz bloqueados cuyo nombre muestra el nº de miembros y la gente conectada en voz, actualizándose periódicamente.
-- **Auto-sync de plantilla** (`template_sync`) — mantiene al día la plantilla del servidor: si detecta cambios, la sincroniza sola y lo anuncia en el canal de logs.
-- **Encuestas** (`polls`) — `/encuesta` con 2–10 opciones y **tiempo límite**. Se vota con botones (un voto por persona, cambiable); al terminar borra el mensaje y publica los resultados con barras y porcentajes. Persisten en SQLite (sobreviven a reinicios).
-- **Tickets** (`tickets`) — sistema estilo *Ticket Tool*: panel con botón para abrir, canal privado por ticket dentro de una categoría (solo lo ven el autor y los roles de staff), y cierre con confirmación (solo staff). Botones persistentes.
-- **Avisos de releases de GitHub** (`releases`) — vigila uno o varios repositorios (`GITHUB_RELEASES_REPOS`, formato `owner/repo`) y, cuando publican una nueva *release*, lo anuncia en `GITHUB_RELEASES_CHANNEL_ID` con un embed y un ping configurable (`GITHUB_RELEASES_MENTION`, por defecto `@everyone`). Comprueba cada `GITHUB_RELEASES_INTERVAL` minutos; en el primer arranque memoriza la versión actual sin avisar (para no spamear) y guarda el estado en `data/releases_state.json`. Soporta `GITHUB_TOKEN` opcional para más límite de la API.
-- **Alertas de salud** (`health`) — vigila temperatura, RAM y disco de la Pi y avisa por **DM al owner** al superar los umbrales (`HEALTH_TEMP_MAX`/`HEALTH_RAM_MAX`/`HEALTH_DISK_MAX`), con aviso de recuperación.
-- **Automod** (`automod`) — borra **invitaciones a otros servidores** y corta el **spam/flood** (`AUTOMOD_SPAM_COUNT` mensajes en `AUTOMOD_SPAM_SECONDS`), con aislamiento opcional. El staff y los roles de `AUTOMOD_EXEMPT_ROLES` se libran.
-- **Estado del bot** (`botinfo`) — `/bot`: uptime, latencia, versión (último commit de git), nº de servidores y comandos, y un vistazo al host.
-- **Stats de Counter-Strike** (`csstats`) — `/cs [@usuario|url]`: **Leetify rating**, rangos (Premier, FACEIT, Wingman, Renown y competitivo por mapa), las tres habilidades con barra (puntería/posición/utilidad), impacto por ronda (clutch, apertura, CT vs T), mecánica fina (headshots, spray, counter-strafing, preaim, reacción), duelos de apertura, trades, uso de utilidad (flashes y HE) y la **forma de las últimas 10 partidas**. Si algún compañero reciente está en el server, lo menciona. Datos de la **API pública de Leetify**; el color del mensaje cambia según el rating. También `/cs_vincular`, `/cs_desvincular` y `/cs_comparar` (hasta 4 perfiles).
-- **Stats de Rust** (`rust`) — `/rust [@usuario|url]`: enlace al perfil de Steam, K/D, horas jugadas, logros, puntería por arma con barra, cómo la palma, caza, farmeo, construcción y curiosidades (notas tocadas, metros a caballo, tiempo irradiado…). Sale todo de la **Steam Web API** (gratis, necesita `STEAM_API_KEY`), que publica ~150 contadores del juego. También `/rust_vincular` y `/rust_desvincular`.
+- 📋 **Audit log** (`logs`) — MEE6 style: deleted and edited messages, joins and leaves, bans/unbans (with the moderator, via audit log), nickname, role, avatar and username changes, channel creation/deletion and voice moves (optional).
+- 🔊 **Temporary voice channels** (`tempvoice`) — joining a "lobby" channel creates your own voice channel, which is deleted when the last person leaves.
+- ⏰ **Reminders** (`reminders`) — `/recordatorio`, `/recordatorios`, `/cancelar_recordatorio`. Pings you by DM on the date you set; stored in SQLite.
+- 📺 **Stream alerts** (`streams`) — announces when a member with a given role goes live on Twitch.
+- 📅 **Events** (`events`) — `/evento` creates server events with a date range, a cover image and automatic reminders before they start and end.
+- 🛡️ **Moderation** (`moderation`) — `/clear` bulk-deletes the last N messages (works around Discord's limit on old messages).
+- 📊 **Machine stats** (`stats`) — `/stats` shows latency, uptime, CPU, RAM, temperature and disk of the Pi.
+- 👋 **Welcome** (`welcome`) — welcome/goodbye messages and an auto-role for new members.
+- ⚔️ **Scrims and teams** (`scrim`) — `/scrim` randomly splits the people in a voice channel into two teams and **moves them**; `/equipos` only **announces** the teams.
+- 😂 **Auto-react** (`autoreact`) — reacts with a random emoji to messages from anyone with a given role, on ~1 in 10 messages (`REACT_CHANCE`). Uses default faces or your own server emojis.
+- 📬 **Owner notice** (`owner_notify`) — DMs the owner when the bot starts, so you know it came back after a power cut.
+- ℹ️ **Server info** (`serverinfo`) — `/serverinfo` and `/userinfo`.
+- 🔢 **Counter channels** (`serverstats`) — two locked voice channels whose names show the member count and how many people are in voice, refreshed periodically.
+- 🧩 **Template auto-sync** (`template_sync`) — keeps the server template up to date, syncing it on its own when it detects changes.
+- 🗳️ **Polls** (`polls`) — `/encuesta` with 2–10 options and a **deadline**. Voting is done with buttons (one vote each, changeable); when time is up it deletes the message and posts the results with bars and percentages. Persisted in SQLite, so they survive restarts.
+- 🎫 **Tickets** (`tickets`) — *Ticket Tool* style: a panel with a button to open one, a private channel per ticket inside a category (visible only to the author and staff roles) and closing with confirmation. Persistent buttons.
+- 🚀 **GitHub release alerts** (`releases`) — watches one or more repos (`GITHUB_RELEASES_REPOS`, `owner/repo`) and announces every new release in `GITHUB_RELEASES_CHANNEL_ID` with an embed and a configurable ping. On first boot it memorises the current version without posting, so it never spams the history.
+- 📰 **Steam news** (`steamnews`) — publishes what developers announce on Steam (patches, devblogs, events), **one thread per game** inside a single channel, pinging that game's role. Games are added on the fly with `/noticias_juego <appid>`; a daily keep-alive keeps the threads from being archived.
+- 🩺 **Health alerts** (`health`) — watches temperature, RAM and disk on the Pi and **DMs the owner** when a threshold is crossed, plus a recovery notice.
+- 🚫 **Automod** (`automod`) — deletes **invites to other servers** and stops **spam/flood** (`AUTOMOD_SPAM_COUNT` messages in `AUTOMOD_SPAM_SECONDS`), with optional timeout. Staff and `AUTOMOD_EXEMPT_ROLES` are exempt.
+- 🏷️ **Bot info** (`botinfo`) — `/bot`: uptime, latency, version (latest git commit), number of servers and commands, and a peek at the host.
+- 🔫 **Counter-Strike stats** (`csstats`) — `/cs [@user|url]`: **Leetify rating**, ranks (Premier, FACEIT, Wingman, Renown and per-map competitive), the three skills with bars (aim/positioning/utility), round impact (clutches, opening duels, CT vs T), fine mechanics (headshots, spray, counter-strafing, preaim, reaction time), trades, utility usage and the **form of the last 10 matches**. Data from the public **Leetify API**. Also `/cs_vincular`, `/cs_desvincular` and `/cs_comparar` (up to 4 profiles).
+- 🪓 **Rust stats** (`rust`) — `/rust [@user|url]`: Steam profile link, K/D, hours played, achievements, per-weapon accuracy with bars, how you die, hunting, farming, building and trivia (notes played, metres on horseback, time irradiated…). Straight from the **Steam Web API** (free, needs `STEAM_API_KEY`), which exposes ~150 in-game counters. Also `/rust_vincular`, `/rust_desvincular` and `/rust_comparar`.
+- 🎚️ **Levels and XP** (`levels`) — XP for taking part, `/rank` with a progress bar, `/leaderboard` top 10 and the staff commands `/xp_dar` and `/xp_reset`.
+- 🔘 **Button roles** (`reactionroles`) — panels configured by command with persistent buttons: `/roles_crear`, `/roles_add`, `/roles_publicar`…
+- 💾 **Backups** (`backup`) — zips `data/`, every `.env*`, the project manual and the systemd units and uploads them to **Google Drive** on a schedule, keeping the last N. `/backup`, `/backups`.
+- 🧠 **AI chat** (`ai_chat`) — in a dedicated channel the bot reads ~1 in 4 messages (configurable) and replies **following the thread**, talking **like one more of the group** instead of an assistant. Uses a **free** OpenAI-compatible API (Groq by default). It knows that when people say *the BOT* they mean her, reads the README to answer questions about commands, and splits long replies into several messages. Two-layer memory: **manual context** (`ai_context.json`, via `/ia_contexto`, `/ia_contexto_server`, `/ia_contextos`) and a **memory it builds and consolidates on its own** (`ai_saved.json`): it saves relevant facts, nicknames and catchphrases, merges duplicates and compacts on every write. It can also post a **daily summary** of the previous day's chat, and everything is editable from the web panel at `/ia`.
 
-> 🔗 La cuenta de Steam se vincula **una sola vez** y vale para `/cs` y para `/rust` (se guarda en `data/steam_links.json`).
-- **Niveles y XP** (`levels`) — XP por participar, `/rank` con barra de progreso, `/leaderboard` top 10 y comandos de staff `/xp_dar` y `/xp_reset`.
-- **Roles por botón** (`reactionroles`) — paneles configurables por comando y con botones persistentes: `/roles_crear`, `/roles_add`, `/roles_publicar`…
-- **Charla con IA** (`ai_chat`) — en un canal configurable, el bot analiza ~1 de cada 4 mensajes (configurable) y responde con IA **siguiendo el hilo** (se le pasan los últimos mensajes) y hablando **como uno más**, imitando la jerga y el estilo del grupo (sin rol ni imitar a nadie). Usa una API **gratuita** compatible con OpenAI (por defecto **Groq**, sin tarjeta). Sabe que cuando hablan del *BOT* se refieren a ella, conoce el README para resolver dudas de comandos, y parte en varios mensajes las respuestas largas. Memoria en dos capas: **contexto manual** (`ai_context.json`, con `/ia_contexto`, `/ia_contexto_server`, `/ia_contextos`) y **memoria que aprende y consolida sola** (`ai_saved.json`): guarda datos relevantes, motes y expresiones, fusiona duplicados y compacta en cada escritura. Cada usuario guarda `id`, `nombre` y `mote` (autocompletados desde Discord al arrancar). Además: **resumen diario** opcional (la IA postea por la mañana un resumen gracioso del chat del día anterior, vía `AI_SUMMARY_CHANNEL_ID`/`AI_SUMMARY_HOUR`), y todo es **editable desde el panel web** en `/ia` (ver/editar `ai_context.json` y `ai_saved.json` y un interruptor para activar/desactivar la charla al instante).
+> 🔗 Steam accounts are linked **per game**: `/cs_vincular` and `/rust_vincular` keep their own account, because plenty of people play CS on one and Rust on another.
 
-### Comandos slash
+### ⌨️ Slash commands
 
-| Comando | Descripción |
-|---------|-------------|
-| `/recordatorio` | Te aviso por privado en la fecha indicada |
-| `/recordatorios` | Lista tus recordatorios pendientes |
-| `/cancelar_recordatorio` | Cancela un recordatorio por su número |
-| `/evento` | Crea un evento del servidor con fechas e imagen |
-| `/clear` | Borra los últimos N mensajes del canal |
-| `/stats` | Estado del bot y de la máquina (CPU/RAM/temperatura) |
-| `/serverinfo` | Información del servidor |
-| `/userinfo` | Información de un usuario |
-| `/scrim` | Reparte a los del canal de voz en dos equipos (los mueve) |
-| `/equipos` | Anuncia dos equipos al azar (no mueve) |
-| `/encuesta` | Crea una encuesta con tiempo límite |
-| `/ticket_panel` | Publica el panel para abrir tickets |
-| `/ia_contexto` | Define el contexto personal de un usuario para la IA (staff) |
-| `/ia_contexto_server` | Define el contexto del servidor para la IA (staff) |
-| `/ia_contextos` | Lista los contextos de IA configurados (staff) |
-
----
-
-## 🖥️ Panel web de control
-
-Panel con tema "hacker" (verde sobre negro, lluvia matrix, scanlines) accesible desde el navegador:
-
-- **Estado del bot** en tiempo real (activo/inactivo) y **telemetría** de la Pi: CPU, RAM, temperatura, disco y uptime.
-- **Gráficas históricas** de CPU/RAM/temperatura (~30 min), dibujadas en `<canvas>` sin librerías externas.
-- **Visor de logs** del bot en vivo, con auto-refresco cada 5 s y scroll inteligente.
-- **Editor del `.env`** desde el navegador, con los secretos (token, contraseñas) enmascarados.
-- **Acciones**: iniciar / parar / reiniciar el bot, reiniciar la Pi y lanzar una actualización completa.
-- **Seguridad**: login con límite de intentos y bloqueo temporal por IP; **HTTPS local** opcional (certificado autofirmado).
-- **App en el móvil**: favicon + manifest + iconos para añadirlo a la pantalla de inicio del iPhone como una app a pantalla completa.
+| Command | What it does |
+|---------|--------------|
+| `/bot` · `/stats` | Bot status (uptime, latency, version) and Pi telemetry |
+| `/serverinfo` · `/userinfo` | Server and user information |
+| `/recordatorio` · `/recordatorios` · `/cancelar_recordatorio` | Personal reminders by DM |
+| `/evento` | Creates a server event with dates and a cover image |
+| `/encuesta` | Poll with buttons and a deadline |
+| `/scrim` · `/equipos` | Random teams, moving people or just announcing them |
+| `/rank` · `/leaderboard` | Your level and the server top 10 |
+| `/cs` · `/cs_comparar` · `/cs_vincular` · `/cs_desvincular` | Counter-Strike 2 stats |
+| `/rust` · `/rust_comparar` · `/rust_vincular` · `/rust_desvincular` | Rust stats |
+| `/clear` | Bulk-deletes the last N messages *(staff)* |
+| `/ticket_panel` | Publishes the ticket panel *(staff)* |
+| `/roles_crear` · `/roles_add` · `/roles_publicar` | Button role panels *(staff)* |
+| `/noticias` · `/noticias_juego` · `/noticias_borrar` · `/noticias_lista` | Steam news and the games it watches *(staff)* |
+| `/backup` · `/backups` | Manual backup and the list of stored ones *(staff)* |
+| `/ia_contexto` · `/ia_memoria` · `/ia_olvidar` · `/ia_reset` | AI memory and context *(staff)* |
 
 ---
 
-## ⚙️ Configuración
+## 🖥️ Web control panel
 
-Toda la configuración va en un archivo `.env` (ver `.env.example` para la lista completa con comentarios). Bloques principales:
+Hacker-themed panel (green on black, matrix rain, scanlines) you open in a browser:
 
-- **Bot**: `DISCORD_TOKEN`, `GUILD_ID`, `OWNER_USER_ID`
-- **Logs**: `LOG_CHANNEL_ID`, `LOG_VOICE`, `LOG_BOTS`
-- **Voz temporal**: `MAIN_VOICE_CHANNEL_ID`, `TEMP_VOICE_CATEGORY_ID`, `TEMP_VOICE_LIMIT`
-- **Directos**: `STREAM_ANNOUNCE_CHANNEL_ID`, `STREAM_ROLE_IDS`
-- **Eventos**: `EVENT_ANNOUNCE_CHANNEL_ID`, `EVENT_LEAD_MINUTES`
-- **Bienvenidas**: `WELCOME_CHANNEL_ID`, `AUTOROLE_ID`, mensajes
-- **Scrims**: `SCRIM_TEAM1_CHANNEL_ID`, `SCRIM_TEAM2_CHANNEL_ID`
-- **Auto-reacción**: `REACT_ROLE_ID`, `REACT_EMOJIS`, `REACT_USE_SERVER_EMOJIS`, `REACT_CHANCE`
-- **Canales-contador**: `STATS_MEMBERS_CHANNEL_ID`, `STATS_VOICE_CHANNEL_ID`, nombres, `STATS_UPDATE_SECONDS`
-- **Plantilla**: `TEMPLATE_AUTO_SYNC`, `TEMPLATE_SYNC_MINUTES`
-- **Tickets**: `TICKET_PANEL_CHANNEL_ID`, `TICKET_CATEGORY_ID`, `TICKET_STAFF_ROLE_IDS`, textos
-- **Charla con IA**: `AI_CHANNEL_ID`, `AI_CHANCE`, `AI_API_BASE`, `AI_API_KEY`, `AI_MODEL`, `AI_SYSTEM_PROMPT`
-- **Panel**: `PANEL_PASSWORD`, `PANEL_PORT`, `PANEL_SECRET_KEY`, `PANEL_SSL_CERT`, `PANEL_SSL_KEY`
+- 📈 **Live bot status** and Pi **telemetry**: CPU, RAM, temperature, disk and uptime.
+- 📉 **History charts** for CPU/RAM/temperature (~30 min), drawn on `<canvas>` with no external libraries.
+- 📜 **Live log viewer**, auto-refreshing every 5 s with smart scrolling.
+- ✏️ **`.env` editor** from the browser, with secrets (token, passwords) masked.
+- 🧠 **AI page** (`/ia`): read and edit `ai_context.json` and `ai_saved.json`, and a switch to turn the chat on or off instantly.
+- 🎛️ **Actions**: start / stop / restart the bot, reboot the Pi and run a full update.
+- 🔒 **Security**: login with attempt limits and temporary per-IP lockout; optional **local HTTPS** (self-signed certificate).
+- 📱 **Phone app**: favicon + manifest + icons, so you can add it to your iPhone home screen as a full-screen app.
 
 ---
 
-## 📁 Estructura
+## ⚙️ Configuration
+
+Everything is read from two files (see `.env.example` and `.env.avisos.example` for the full annotated list):
+
+**`.env`** — the bot itself:
+
+- 🤖 **Bot**: `DISCORD_TOKEN`, `GUILD_ID`, `OWNER_USER_ID`, `TIMEZONE`
+- 📋 **Logs**: `LOG_CHANNEL_ID`, `LOG_VOICE`, `LOG_BOTS`
+- 🔊 **Temp voice**: `MAIN_VOICE_CHANNEL_ID`, `TEMP_VOICE_CATEGORY_ID`, `TEMP_VOICE_LIMIT`
+- 📺 **Streams**: `STREAM_ANNOUNCE_CHANNEL_ID`, `STREAM_ROLE_IDS`
+- 📅 **Events**: `EVENT_ANNOUNCE_CHANNEL_ID`, `EVENT_LEAD_MINUTES`
+- 👋 **Welcome**: `WELCOME_CHANNEL_ID`, `AUTOROLE_ID`, messages
+- ⚔️ **Scrims**: `SCRIM_TEAM1_CHANNEL_ID`, `SCRIM_TEAM2_CHANNEL_ID`
+- 🔢 **Counter channels**: `STATS_MEMBERS_CHANNEL_ID`, `STATS_VOICE_CHANNEL_ID`, `STATS_UPDATE_SECONDS`
+- 🎫 **Tickets**: `TICKET_PANEL_CHANNEL_ID`, `TICKET_CATEGORY_ID`, `TICKET_STAFF_ROLE_IDS`
+- 🎮 **Game stats**: `STEAM_API_KEY`, `LEETIFY_API_KEY`, `CS_EMOJI`, `RUST_EMOJI`
+- 🧠 **AI**: `AI_CHANNEL_ID`, `AI_CHANCE`, `AI_API_BASE`, `AI_API_KEY`, `AI_MODEL`, `AI_SYSTEM_PROMPT`
+- 💾 **Backups**: `BACKUP_ENABLED`, `BACKUP_KEEP`, `BACKUP_INCLUDE_ENV`
+- 🖥️ **Panel**: `PANEL_PASSWORD`, `PANEL_PORT`, `PANEL_SECRET_KEY`, `PANEL_SSL_CERT`, `PANEL_SSL_KEY`
+
+**`.env.avisos`** — only the things the bot watches, kept apart because these lists grow:
+
+- 🚀 `GITHUB_RELEASES_REPOS`, `GITHUB_RELEASES_CHANNEL_ID`, `GITHUB_RELEASES_INTERVAL`
+- 📰 `STEAM_NEWS_CHANNEL_ID`, `STEAM_NEWS_JUEGOS`, `STEAM_NEWS_INTERVAL`, `STEAM_NEWS_KEEPALIVE_HOUR`
+
+---
+
+## 📁 Layout
 
 ```
 discord-bot/
-├── bot.py                # arranque del bot y carga de cogs
-├── config.py             # lee toda la configuración del .env
+├── bot.py                # boots the bot and loads the cogs
+├── config.py             # reads every setting from .env / .env.avisos
+├── VERSION               # current version, bumped by the release workflow
+├── CHANGELOG.md          # release notes are taken from here
 ├── requirements.txt
-├── .env.example          # plantilla de configuración
-├── ai_context.json       # contexto manual de la IA por servidor/usuario (local, no en git)
-├── ai_saved.json         # memoria que la IA guarda sola (local, no en git)
-├── startup.sh            # arranque: actualiza, sincroniza con GitHub y reinicia
-├── update.sh             # actualización manual completa
-├── cogs/                 # cada funcionalidad en su módulo
-│   ├── logs.py  tempvoice.py  reminders.py  streams.py  events.py
-│   ├── moderation.py  stats.py  welcome.py  scrim.py  autoreact.py
-│   ├── owner_notify.py  serverinfo.py  serverstats.py  template_sync.py
-│   └── polls.py  tickets.py  ai_chat.py
-├── panel/                # panel web
-│   ├── app.py            # servidor Flask
-│   ├── templates/        # login, dashboard, config (tema hacker)
-│   └── static/           # favicon e iconos PWA
-└── data/                 # bases de datos SQLite (generado, no en git)
+├── .env.example          # configuration template
+├── .env.avisos.example   # template for what the bot watches
+├── startup.sh            # on boot: updates the Pi, syncs with GitHub, restarts the bot
+├── update.sh             # manual full update
+├── cogs/                 # one module per feature (27 of them)
+├── panel/                # web panel
+│   ├── app.py            # Flask server
+│   ├── templates/        # login, dashboard, config, ai
+│   └── static/           # favicon and PWA icons
+├── scripts/              # helpers (Google Drive authorisation)
+└── data/                 # all persistent state (git-ignored)
 ```
 
 ---
 
-## 🚀 Despliegue en la Raspberry Pi
+## 🚀 Deployment on the Raspberry Pi
 
-El bot y el panel corren como servicios **systemd** y se actualizan solos desde GitHub en cada arranque.
+The bot and the panel run as **systemd** services and update themselves from GitHub on every boot.
 
-- `discordbot.service` — ejecuta el bot (reinicio automático).
-- `panel.service` — ejecuta el panel web (arranca con la Pi).
-- `bot-startup.service` — al encender, ejecuta `startup.sh`: `apt update/upgrade`, sincroniza el repo (`git reset --hard origin/main`), instala dependencias y reinicia el bot.
+- `discordbot.service` — runs the bot (auto-restart).
+- `panel.service` — runs the web panel.
+- `bot-startup.service` — on boot runs `startup.sh`: `apt update/upgrade`, syncs the repo (`git reset --hard origin/main`), installs dependencies and restarts the bot.
 
-Flujo de trabajo: los cambios se suben a **GitHub** y la Pi se sincroniza sola. Para aplicar a mano:
+The workflow is: **changes → GitHub → the Pi syncs itself**. To apply them by hand:
 
 ```bash
-bash ~/startup.sh            # sincroniza el repo y reinicia el bot
-sudo systemctl restart panel # aplica cambios del panel
+sudo bash /home/renox/discord-bot/startup.sh   # sync the repo and restart the bot
+sudo systemctl restart panel                   # apply panel changes
+cat ~/discord-bot/VERSION                      # always check what actually got deployed
 ```
 
-### Acceso remoto (Tailscale)
+### 🔐 Remote access (Tailscale)
 
-Con [Tailscale](https://tailscale.com/) instalado, el panel es accesible desde cualquier sitio **sin abrir puertos del router** y cifrado de extremo a extremo:
+With [Tailscale](https://tailscale.com/) installed, the panel is reachable from anywhere **without opening a single router port**, end-to-end encrypted:
 
 ```bash
 curl -fsSL https://tailscale.com/install.sh | sh
 sudo tailscale up
-tailscale ip -4              # IP privada 100.x.y.z para entrar al panel
+tailscale ip -4              # private 100.x.y.z address to reach the panel
 ```
 
 ---
 
-> Proyecto personal autoalojado. La configuración sensible (`.env`), las bases de datos y el entorno virtual no se incluyen en el repositorio.
+> 🔒 Personal self-hosted project. Sensitive configuration (`.env`), databases and the virtual environment are **not** part of this repository.
