@@ -5,7 +5,7 @@ Raspberry Pi Zero 2 W. Servidor privado de colegas ("la man cave"): gamers de
 Counter-Strike y Rust, humor de cachondeo entre amigos.
 
 - **Repo**: https://github.com/Ren0X1/RGL-Discord-BOT (rama `main`)
-- **Versión actual**: 1.2.0.f0
+- **Versión actual**: 1.4.0.f0
 - **Autor**: Ren0X1 (renox) — responder siempre **en español**, directo y sin florituras.
 
 > Este fichero es el manual del proyecto y **entra en los backups automáticos**
@@ -177,7 +177,7 @@ segundo no existe, esas funciones simplemente quedan apagadas. Las plantillas so
 
 ### `data/` — estado persistente (nada de esto va a git)
 `ai_context.json`, `ai_saved.json`, `ai_state.json`, `steam_links.json`,
-`steam_news.json`, `levels.db`, `polls.db`, `reminders.db`, `tickets.db`,
+`steam_news.json`, `steam_juegos.json`, `levels.db`, `polls.db`, `reminders.db`, `tickets.db`,
 `reaction_roles.json`, `releases_state.json`,
 `gdrive_token.json`, `gdrive_client.json`
 
@@ -208,7 +208,7 @@ segundo no existe, esas funciones simplemente quedan apagadas. Las plantillas so
 | `serverinfo` | `/serverinfo`, `/userinfo`. |
 | `serverstats` | Canales de voz como contadores de miembros. |
 | `stats` | `/stats` (telemetría de la Pi). Exporta `temperatura()`, `ram_uso()`, `cpu_percent()`, `formato_uptime()` — **reutilizadas por `health` y `botinfo`**. |
-| `steamnews` | Noticias oficiales de Steam en hilos, por juego. Ver sección propia. |
+| `steamnews` | Noticias oficiales de Steam en hilos, por juego, con keep-alive diario. Ver sección propia. |
 | `streams` | Avisos de directos de Twitch. |
 | `template_sync` | Sincroniza la plantilla del servidor. **En silencio**: no escribe en el canal de log. |
 | `tempvoice` | Canales de voz temporales. |
@@ -278,14 +278,40 @@ pestaña de novedades de Steam (parches, devblogs, eventos).
   **una sola vez por juego** (`presentado` en el estado) y **no pinga**: el rol
   se enseña pero con `AllowedMentions.none()`, que aún no lo tiene nadie.
   Añadir un juego nuevo a `STEAM_NEWS_JUEGOS` crea su hilo en la vuelta siguiente.
+- **Ancho de los embeds**: Discord estrecha el embed hasta el texto más largo
+  **salvo que lleve imagen**, y entonces lo estira al ancho máximo. Como no todas
+  las noticias traen foto, las que no la llevan van con un PNG transparente de
+  1024x2 px embebido en base64 (`_espaciador()`, 88 bytes, se manda como adjunto
+  y se referencia con `attachment://ancho.png`): no se ve, pero fuerza el ancho
+  máximo. Más ancho = menos líneas = menos scroll. Mismo truco en el mensaje de
+  estreno. Si el texto no cabe (`MAX_DESCRIPCION`), se remata con un enlace
+  **Seguir leyendo en Steam** en vez de un `[…]` seco.
+- **Hilos vivos (keep-alive)**: Discord archiva un hilo si nadie habla en él (7
+  días es el máximo de `auto_archive_duration`) y entonces desaparece de la lista
+  del canal. Cada día a `STEAM_NEWS_KEEPALIVE_HOUR` (11:00 por defecto, hora de
+  `TIMEZONE`) el bot pasa por cada hilo, lo **desarchiva si hacía falta**, suelta
+  un mensaje y **lo borra al momento**: cuenta como actividad y no queda rastro.
+  Borrar el mensaje no reinicia el contador de archivado, así que da igual.
 - Estado en `data/steam_news.json` (última noticia, hilo y estreno de cada appid).
   **La primera vuelta no publica noticias**: solo apunta por dónde va cada juego,
   para no soltar el histórico entero de golpe.
-- `/noticias` (staff) fuerza una comprobación; `/noticias forzar:True` republica
-  la última aunque ya se hubiera visto (para probar).
 
-Config en `.env.avisos`: `STEAM_NEWS_JUEGOS=appid:ID_DEL_ROL:Nombre[:emoji]`
-separados por comas.
+### Comandos (todos de staff, `manage_guild`, respuesta efímera)
+| Comando | Qué hace |
+|---|---|
+| `/noticias` | Fuerza una comprobación. `forzar:True` republica la última aunque ya se viera; `mantener:True` lanza el keep-alive a mano (para probarlo sin esperar a las 11). |
+| `/noticias_juego` | **Añade o actualiza un juego por App ID**. Parámetros: `appid` (obligatorio), `rol`, `nombre`, `emoji`. Valida el App ID contra la tienda de Steam y coge de ahí el nombre si no se lo das; crea el hilo, lo estrena y apunta por dónde va el feed **sin publicar el histórico**. |
+| `/noticias_borrar` | Deja de vigilar un juego (autocompletado con los que hay). `borrar_hilo:True` se lleva también el hilo. |
+| `/noticias_lista` | Los juegos vigilados: App ID, de dónde sale cada uno, rol, hilo y cuándo fue su última noticia. |
+
+### De dónde salen los juegos (dos sitios)
+1. `STEAM_NEWS_JUEGOS` en `.env.avisos`: `appid:ID_DEL_ROL:Nombre[:emoji]` por comas.
+2. `data/steam_juegos.json`, que mantiene `/noticias_juego` desde Discord.
+
+Se fusionan por appid y **manda el del comando** (es lo último que se tocó). El
+cog arranca aunque no haya ningún juego, para poder añadirlos en caliente sin
+reiniciar. Cambiar el nombre o el emoji con `/noticias_juego` **renombra el hilo**
+en la vuelta siguiente. Al vivir en `data/`, la lista entra en los backups.
 
 ---
 
@@ -423,6 +449,10 @@ el script y no interesa tenerlas dentro del propio backup.
 13. **Dar por bueno un despliegue porque `startup.sh` dice "Hecho"** → si el
     `git fetch` falla por permisos, el script continúa y reinicia con el código
     de antes. Comprobar siempre `cat VERSION` en la Pi al terminar.
+14. **Dejar los hilos de noticias a su suerte** → Discord los archiva a los 7
+    días sin actividad y desaparecen del canal. De ahí el keep-alive diario.
+15. **Embed sin imagen** → Discord lo estrecha al texto más largo y el mismo
+    contenido ocupa el doble de alto. Si no hay foto, espaciador transparente.
 
 ---
 
@@ -433,4 +463,3 @@ el script y no interesa tenerlas dentro del propio backup.
 - Sistema de avisos (`/warn`, `/warnings`).
 - Alertas de salud ampliadas (autoreinicio / healthcheck).
 - Anuncios de GitHub para commits, PRs e issues (ahora solo releases).
-- Más juegos en `steamnews` (basta con añadirlos a `STEAM_NEWS_JUEGOS`).

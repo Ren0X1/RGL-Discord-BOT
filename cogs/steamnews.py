@@ -1,14 +1,19 @@
 """
 Módulo 27 — Noticias oficiales de Steam.
 
-Vigila los juegos de `STEAM_NEWS_JUEGOS` y publica en `STEAM_NEWS_CHANNEL_ID`
-lo que los desarrolladores anuncian en la pestaña de novedades de Steam
-(parches, devblogs, eventos), pingando al rol de cada juego.
+Vigila los juegos configurados y publica en `STEAM_NEWS_CHANNEL_ID` lo que los
+desarrolladores anuncian en la pestaña de novedades de Steam (parches, devblogs,
+eventos), pingando al rol de cada juego.
 
 Reparto del canal:
   - El canal principal se deja libre para el panel de reaction roles.
   - Cada juego tiene **su propio hilo** ("📰 Counter-Strike 2", "📰 Rust") y
     todas sus noticias van ahí dentro, así no se llena el canal de hilos.
+
+De dónde salen los juegos (dos sitios, se fusionan por appid):
+  - `STEAM_NEWS_JUEGOS` del `.env.avisos` (los de toda la vida).
+  - `data/steam_juegos.json`, que mantiene `/noticias_juego` desde Discord.
+    Si un appid está en los dos manda el del comando, que es lo último tocado.
 
 Los datos salen de la Steam Web API (`ISteamNews/GetNewsForApp`), que es
 pública y no necesita clave. Se piden solo los anuncios oficiales
@@ -18,6 +23,17 @@ noticias de PC Gamer, PCGamesN o SteamDB, que aquí no pintan nada.
 El contenido viene en el BBCode de Steam ([p], [list], [h2], [img]...) y
 `_a_markdown()` lo traduce a lo que entiende Discord.
 
+**Ancho de los embeds**: Discord estrecha el embed hasta el texto más largo
+salvo que lleve imagen, y entonces lo estira al ancho máximo. Como no todas las
+noticias traen foto, las que no la llevan van con un PNG transparente de
+1024x2 px (`_espaciador()`): no se ve, pero fuerza el ancho máximo. Más ancho =
+menos líneas = menos scroll.
+
+**Hilos vivos**: Discord archiva un hilo si nadie habla en él (7 días como
+mucho). Cada día a `STEAM_NEWS_KEEPALIVE_HOUR` el bot pasa por cada hilo, lo
+desarchiva si hacía falta, suelta un mensaje y lo borra al momento: cuenta como
+actividad y no queda rastro.
+
 Estado en `data/steam_news.json`: por cada appid, la última noticia publicada
 y el hilo que le toca. La **primera vuelta no publica nada**: solo apunta por
 dónde va cada juego, para no soltar de golpe el histórico entero.
@@ -25,13 +41,16 @@ dónde va cada juego, para no soltar de golpe el histórico entero.
 Configuración en `.env.avisos` (ver `.env.avisos.example`).
 """
 
+import io
 import os
 import re
 import json
 import html
+import base64
 import asyncio
 import logging
 import datetime
+from datetime import time as dtime
 
 import aiohttp
 import discord
@@ -42,18 +61,42 @@ import config
 
 log = logging.getLogger("steamnews")
 
+try:
+    from zoneinfo import ZoneInfo
+    _TZ = ZoneInfo(config.TIMEZONE)
+except Exception:                       # sistema sin tzdata: se tira de UTC
+    _TZ = datetime.timezone.utc
+
 _DIR_DATOS = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 ESTADO_PATH = os.path.join(_DIR_DATOS, "steam_news.json")
+JUEGOS_PATH = os.path.join(_DIR_DATOS, "steam_juegos.json")
 
 API = "https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/"
+API_TIENDA = "https://store.steampowered.com/api/appdetails"
 FEED_OFICIAL = "steam_community_announcements"
 
 # Cuánto se pide y cuánto se enseña
 NOTICIAS_POR_CONSULTA = 10
-MAX_DESCRIPCION = 1400          # el tope de Discord es 4096, pero un tocho no lo lee nadie
+MAX_DESCRIPCION = 2200          # el tope de Discord es 4096, pero un tocho no lo lee nadie
 DIAS_ARCHIVADO = 10080          # 7 días, el máximo de auto-archivado de un hilo
+TEXTO_KEEPALIVE = "."           # se borra al segundo, no lo ve nadie
 
 _COLOR = 0x1B2838               # el azul oscuro de Steam
+
+# PNG transparente de 1024x2 px (88 bytes). Va como adjunto en las noticias que
+# no traen imagen: Discord estira el embed hasta el ancho de la imagen, así que
+# el embed sale al máximo y el "espaciador" queda como una línea invisible.
+_ESPACIADOR_B64 = (
+    "iVBORw0KGgoAAAANSUhEUgAABAAAAAACCAYAAADGmq6bAAAAH0lEQVR42u3BAQ0AAADCoPdPbQ43"
+    "oAAAAAAAAACAfwMgAgABNk63HgAAAABJRU5ErkJggg=="
+)
+_ESPACIADOR_NOMBRE = "ancho.png"
+
+
+def _espaciador():
+    """Un `discord.File` nuevo con el PNG invisible que ensancha el embed."""
+    return discord.File(io.BytesIO(base64.b64decode(_ESPACIADOR_B64)),
+                        filename=_ESPACIADOR_NOMBRE)
 
 
 # --------------------------------------------------------------- BBCode
@@ -62,8 +105,8 @@ _YT_RE = re.compile(r"\[previewyoutube=[\"']?([\w-]+)", re.I)
 
 # Apartan los corchetes literales de Steam mientras se limpia el BBCode. Van en
 # la zona de uso privado de Unicode, así que no chocan con ningún texto real.
-_MARCA_ABRE = "\ue000"
-_MARCA_CIERRA = "\ue001"
+_MARCA_ABRE = ""
+_MARCA_CIERRA = ""
 
 # (patrón, reemplazo) en orden; se aplican sobre el texto crudo de Steam
 _REGLAS = (
@@ -97,8 +140,11 @@ _REGLAS = (
 _REGLAS = tuple((re.compile(p, re.I | re.S), r) for p, r in _REGLAS)
 
 
-def _a_markdown(texto):
-    """El BBCode de Steam -> markdown de Discord, recortado."""
+def _a_markdown(texto, url=None):
+    """El BBCode de Steam -> markdown de Discord, recortado.
+
+    Si hay que cortar se remata con un enlace a la noticia entera (`url`).
+    """
     if not texto:
         return ""
     # Steam escapa los corchetes literales de los parches (los patch notes de
@@ -114,8 +160,8 @@ def _a_markdown(texto):
     if len(texto) > MAX_DESCRIPCION:
         # cortar por el último salto de línea para no partir una frase
         corte = texto.rfind("\n", 0, MAX_DESCRIPCION)
-        texto = texto[:corte if corte > MAX_DESCRIPCION // 2 else MAX_DESCRIPCION]
-        texto = texto.rstrip() + " […]"
+        texto = texto[:corte if corte > MAX_DESCRIPCION // 2 else MAX_DESCRIPCION].rstrip()
+        texto += (f"…\n\n**[Seguir leyendo en Steam]({url})**" if url else " […]")
     return texto
 
 
@@ -140,19 +186,30 @@ def _enlace(appid, gid):
     return f"https://store.steampowered.com/news/app/{appid}/view/{gid}"
 
 
+def _capsula(appid):
+    """El icono del juego en Steam, para la cabecera de los embeds."""
+    return f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/capsule_231x87.jpg"
+
+
 class SteamNews(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self._estado = self._cargar()
+        self._juegos = self._cargar_juegos()
         self._lock = asyncio.Lock()
-        if config.STEAM_NEWS_ENABLED and config.STEAM_NEWS_CHANNEL_ID and config.STEAM_NEWS_JUEGOS:
+        # Se arranca aunque todavía no haya juegos: con /noticias_juego se
+        # añaden en caliente, sin reiniciar el bot.
+        if config.STEAM_NEWS_ENABLED and config.STEAM_NEWS_CHANNEL_ID:
             self.comprobar.change_interval(minutes=config.STEAM_NEWS_INTERVAL)
             self.comprobar.start()
+            if config.STEAM_NEWS_KEEPALIVE:
+                self.mantener_hilos.start()
         else:
-            log.info("Noticias de Steam apagadas (faltan canal, juegos o STEAM_NEWS_ENABLED).")
+            log.info("Noticias de Steam apagadas (faltan canal o STEAM_NEWS_ENABLED).")
 
     def cog_unload(self):
         self.comprobar.cancel()
+        self.mantener_hilos.cancel()
 
     # ------------------------------------------------------------ estado
     def _cargar(self):
@@ -171,6 +228,49 @@ class SteamNews(commands.Cog):
         except OSError as exc:
             log.warning("No pude guardar %s: %s", ESTADO_PATH, exc)
 
+    # -------------------------------------------------- juegos vigilados
+    def _cargar_juegos(self):
+        """Los juegos añadidos a mano con `/noticias_juego`."""
+        try:
+            with open(JUEGOS_PATH, encoding="utf-8") as f:
+                datos = json.load(f)
+        except (OSError, ValueError):
+            return []
+        juegos = []
+        for j in datos if isinstance(datos, list) else []:
+            try:
+                appid = int(j["appid"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            juegos.append({
+                "appid": appid,
+                "rol": int(j.get("rol") or 0),
+                "nombre": str(j.get("nombre") or f"App {appid}"),
+                "emoji": str(j.get("emoji") or "📰"),
+            })
+        return juegos
+
+    def _guardar_juegos(self):
+        os.makedirs(_DIR_DATOS, exist_ok=True)
+        try:
+            with open(JUEGOS_PATH, "w", encoding="utf-8") as f:
+                json.dump(self._juegos, f, ensure_ascii=False, indent=2)
+        except OSError as exc:
+            log.warning("No pude guardar %s: %s", JUEGOS_PATH, exc)
+
+    def juegos(self):
+        """Los del `.env.avisos` + los del comando (estos mandan si coinciden)."""
+        fusion = {j["appid"]: dict(j) for j in config.STEAM_NEWS_JUEGOS}
+        for j in self._juegos:
+            fusion[j["appid"]] = dict(j)
+        return list(fusion.values())
+
+    def _juego(self, appid):
+        for j in self.juegos():
+            if j["appid"] == appid:
+                return j
+        return None
+
     # --------------------------------------------------------------- API
     async def _noticias(self, session, appid):
         """Anuncios oficiales del juego, del más nuevo al más viejo."""
@@ -186,6 +286,23 @@ class SteamNews(commands.Cog):
         oficiales = [n for n in items
                      if n.get("feed_type") == 1 or n.get("feedname") == FEED_OFICIAL]
         return sorted(oficiales, key=lambda n: n.get("date") or 0, reverse=True)
+
+    async def _nombre_en_steam(self, session, appid):
+        """El nombre del juego según la tienda. None si el App ID no existe."""
+        params = {"appids": appid, "filters": "basic", "l": "spanish"}
+        try:
+            async with session.get(API_TIENDA, params=params) as r:
+                if r.status != 200:
+                    log.info("La tienda respondió %s para el appid %s", r.status, appid)
+                    return None
+                datos = await r.json(content_type=None)
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
+            log.info("No pude consultar la tienda para %s: %s", appid, exc)
+            return None
+        ficha = (datos or {}).get(str(appid)) or {}
+        if not ficha.get("success"):
+            return None
+        return ((ficha.get("data") or {}).get("name") or "").strip() or None
 
     # -------------------------------------------------------------- hilo
     async def _hilo(self, canal, juego):
@@ -222,35 +339,48 @@ class SteamNews(commands.Cog):
             except (discord.Forbidden, discord.HTTPException) as exc:
                 log.warning("No pude desarchivar el hilo de %s: %s", nombre, exc)
                 return None
+        elif hilo.name != nombre:
+            # le han cambiado el nombre o el emoji con /noticias_juego
+            try:
+                await hilo.edit(name=nombre)
+                log.info("Hilo %s renombrado a %s", hilo.id, nombre)
+            except (discord.Forbidden, discord.HTTPException) as exc:
+                log.info("No pude renombrar el hilo de %s: %s", nombre, exc)
         self._estado.setdefault(clave, {})["hilo"] = hilo.id
         return hilo
 
     # ------------------------------------------------------------- embed
     def _embed(self, noticia, juego):
+        """El embed de una noticia y, si hace falta, el adjunto que lo ensancha."""
         crudo = noticia.get("contents") or ""
+        url = _enlace(juego["appid"], noticia.get("gid"))
         e = discord.Embed(
             title=(noticia.get("title") or "Sin título")[:256],
-            url=_enlace(juego["appid"], noticia.get("gid")),
-            description=_a_markdown(crudo) or "*(sin texto, mira el enlace)*",
+            url=url,
+            description=_a_markdown(crudo, url) or "*(sin texto, mira el enlace)*",
             color=_COLOR,
             timestamp=datetime.datetime.fromtimestamp(
                 noticia.get("date") or 0, datetime.timezone.utc))
         e.set_author(
             name=juego["nombre"],
             url=f"https://store.steampowered.com/news/app/{juego['appid']}",
-            icon_url=("https://cdn.cloudflare.steamstatic.com/steam/apps/"
-                      f"{juego['appid']}/capsule_231x87.jpg"))
-        imagen = _imagen(crudo)
-        if imagen:
-            e.set_image(url=imagen)
+            icon_url=_capsula(juego["appid"]))
         video = _youtube(crudo)
         if video:
             e.add_field(name="🎬 Vídeo", value=video, inline=False)
         autor = noticia.get("author")
         e.set_footer(text=f"Noticias de Steam · {autor}" if autor else "Noticias de Steam")
-        return e
 
-    # -------------------------------------------------- presentación del hilo
+        # La imagen es lo que decide el ancho del embed: si la noticia trae una,
+        # esa; si no, el espaciador invisible, para que salga igual de ancho.
+        imagen = _imagen(crudo)
+        if imagen:
+            e.set_image(url=imagen)
+            return e, None
+        e.set_image(url=f"attachment://{_ESPACIADOR_NOMBRE}")
+        return e, _espaciador()
+
+    # ---------------------------------------------- presentación del hilo
     async def _presentar(self, canal, juego):
         """Crea el hilo de un juego y suelta dentro el mensaje de estreno.
 
@@ -276,16 +406,17 @@ class SteamNews(commands.Cog):
                          "devblogs y eventos.\n\nCoge el rol en el canal para que te "
                          "avise cuando salga algo."),
             color=_COLOR)
-        e.set_thumbnail(url=("https://cdn.cloudflare.steamstatic.com/steam/apps/"
-                             f"{juego['appid']}/capsule_231x87.jpg"))
+        e.set_thumbnail(url=_capsula(juego["appid"]))
         e.add_field(name="🔔 Avisa a", value=rol, inline=True)
         e.add_field(name="🆔 App ID", value=str(juego["appid"]), inline=True)
         e.add_field(name="⏱️ Comprueba cada",
                     value=f"{config.STEAM_NEWS_INTERVAL} min", inline=True)
+        e.set_image(url=f"attachment://{_ESPACIADOR_NOMBRE}")   # a ancho máximo
         e.set_footer(text="Mensaje de estreno del hilo · solo sale una vez")
 
         try:
-            await hilo.send(embed=e, allowed_mentions=discord.AllowedMentions.none())
+            await hilo.send(embed=e, file=_espaciador(),
+                            allowed_mentions=discord.AllowedMentions.none())
         except (discord.Forbidden, discord.HTTPException) as exc:
             log.warning("No pude presentar el hilo de %s: %s", juego["nombre"], exc)
             return False
@@ -299,11 +430,14 @@ class SteamNews(commands.Cog):
         if hilo is None:
             return False
         rol = f"<@&{juego['rol']}> " if juego["rol"] else ""
+        embed, adjunto = self._embed(noticia, juego)
+        extra = {"file": adjunto} if adjunto else {}
         try:
             await hilo.send(
                 content=f"{rol}**{juego['nombre']}** · {noticia.get('title') or 'Novedades'}",
-                embed=self._embed(noticia, juego),
-                allowed_mentions=discord.AllowedMentions(roles=True, everyone=False, users=False))
+                embed=embed,
+                allowed_mentions=discord.AllowedMentions(roles=True, everyone=False, users=False),
+                **extra)
         except (discord.Forbidden, discord.HTTPException) as exc:
             log.warning("No pude publicar la noticia %s de %s: %s",
                         noticia.get("gid"), juego["nombre"], exc)
@@ -322,16 +456,17 @@ class SteamNews(commands.Cog):
         if canal is None:
             log.warning("No encuentro el canal de noticias %s", config.STEAM_NEWS_CHANNEL_ID)
             return 0
+        juegos = self.juegos()
         publicadas = 0
         # Los hilos que falten se crean y se estrenan antes de nada: así están
-        # ahí desde el primer momento, y al añadir un juego nuevo al .env.avisos
-        # aparece su hilo en la siguiente vuelta sin esperar a que saquen parche.
-        for juego in config.STEAM_NEWS_JUEGOS:
+        # ahí desde el primer momento, y al añadir un juego nuevo aparece su
+        # hilo en la siguiente vuelta sin esperar a que saquen parche.
+        for juego in juegos:
             if await self._presentar(canal, juego):
                 await asyncio.sleep(2)
 
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
-            for juego in config.STEAM_NEWS_JUEGOS:
+            for juego in juegos:
                 clave = str(juego["appid"])
                 guardado = self._estado.setdefault(clave, {})
                 try:
@@ -372,27 +507,253 @@ class SteamNews(commands.Cog):
     async def _antes(self):
         await self.bot.wait_until_ready()
 
+    # ------------------------------------------- mantener los hilos vivos
+    @tasks.loop(time=dtime(hour=config.STEAM_NEWS_KEEPALIVE_HOUR, tzinfo=_TZ))
+    async def mantener_hilos(self):
+        async with self._lock:
+            n = await self._keepalive()
+        log.info("Keep-alive de noticias: %s hilos remozados", n)
+
+    async def _keepalive(self):
+        """Un mensaje en cada hilo, y borrado al momento, para que no se archiven.
+
+        Discord archiva un hilo tras `auto_archive_duration` sin actividad, y el
+        máximo son 7 días. Un mensaje —aunque se borre justo después— cuenta
+        como actividad y reinicia la cuenta. De paso `_hilo()` desarchiva el que
+        ya se hubiera cerrado.
+        """
+        canal = self.bot.get_channel(config.STEAM_NEWS_CHANNEL_ID)
+        if canal is None:
+            log.warning("Keep-alive: no encuentro el canal %s", config.STEAM_NEWS_CHANNEL_ID)
+            return 0
+        vivos = 0
+        for juego in self.juegos():
+            hilo = await self._hilo(canal, juego)
+            if hilo is None:
+                continue
+            try:
+                msg = await hilo.send(TEXTO_KEEPALIVE,
+                                      allowed_mentions=discord.AllowedMentions.none())
+                await asyncio.sleep(1)
+                await msg.delete()
+                vivos += 1
+            except (discord.Forbidden, discord.HTTPException) as exc:
+                log.warning("Keep-alive: fallo con el hilo de %s: %s", juego["nombre"], exc)
+            await asyncio.sleep(1)
+        self._guardar()
+        return vivos
+
+    @mantener_hilos.before_loop
+    async def _antes_keepalive(self):
+        await self.bot.wait_until_ready()
+
     # ---------------------------------------------------------- comandos
+    @staticmethod
+    def _staff(interaction):
+        return interaction.user.guild_permissions.manage_guild
+
     @app_commands.command(name="noticias",
                           description="Solo staff: busca noticias de Steam ahora mismo")
-    @app_commands.describe(forzar="Publica la última noticia aunque ya se hubiera publicado")
-    async def noticias(self, interaction: discord.Interaction, forzar: bool = False):
-        if not interaction.user.guild_permissions.manage_guild:
+    @app_commands.describe(
+        forzar="Publica la última noticia aunque ya se hubiera publicado",
+        mantener="Pasa por los hilos para que no se archiven (prueba del keep-alive)")
+    async def noticias(self, interaction: discord.Interaction,
+                       forzar: bool = False, mantener: bool = False):
+        if not self._staff(interaction):
             await interaction.response.send_message("Esto es cosa del staff.", ephemeral=True)
             return
-        if not (config.STEAM_NEWS_CHANNEL_ID and config.STEAM_NEWS_JUEGOS):
+        juegos = self.juegos()
+        if not (config.STEAM_NEWS_CHANNEL_ID and juegos):
             await interaction.response.send_message(
                 "Las noticias de Steam no están configuradas: mira `STEAM_NEWS_CHANNEL_ID` "
-                "y `STEAM_NEWS_JUEGOS` en el `.env.avisos`.", ephemeral=True)
+                "en el `.env.avisos` y añade juegos con `/noticias_juego`.", ephemeral=True)
             return
         await interaction.response.defer(thinking=True, ephemeral=True)
         async with self._lock:
             n = await self._vuelta(forzar=forzar)
-        juegos = ", ".join(j["nombre"] for j in config.STEAM_NEWS_JUEGOS)
+            vivos = await self._keepalive() if mantener else 0
+        nombres = ", ".join(j["nombre"] for j in juegos)
+        extra = f"\nHilos remozados: **{vivos}**." if mantener else ""
         await interaction.followup.send(
             f"Listo. Publicadas **{n}** noticias en <#{config.STEAM_NEWS_CHANNEL_ID}>.\n"
-            f"Juegos vigilados: {juegos}."
+            f"Juegos vigilados: {nombres}.{extra}"
             + ("" if n else "\nSi esperabas alguna, prueba con `forzar: True`."))
+
+    @app_commands.command(
+        name="noticias_juego",
+        description="Solo staff: añade (o actualiza) un juego de Steam en las noticias")
+    @app_commands.describe(
+        appid="App ID del juego en Steam: store.steampowered.com/app/730 -> 730",
+        rol="Rol al que pingar con cada noticia de este juego",
+        nombre="Nombre a mostrar (por defecto, el que tenga en Steam)",
+        emoji="Emoji del hilo (por defecto 📰)")
+    async def noticias_juego(self, interaction: discord.Interaction, appid: int,
+                             rol: discord.Role = None, nombre: str = None,
+                             emoji: str = None):
+        if not self._staff(interaction):
+            await interaction.response.send_message("Esto es cosa del staff.", ephemeral=True)
+            return
+        if appid <= 0:
+            await interaction.response.send_message(
+                "El App ID es el número de la URL de la tienda: "
+                "`store.steampowered.com/app/730/` → **730**.", ephemeral=True)
+            return
+        if not config.STEAM_NEWS_CHANNEL_ID:
+            await interaction.response.send_message(
+                "Falta `STEAM_NEWS_CHANNEL_ID` en el `.env.avisos`: sin canal no hay hilos.",
+                ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True, ephemeral=True)
+
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
+            en_steam = await self._nombre_en_steam(session, appid)
+            if en_steam is None and not nombre:
+                await interaction.followup.send(
+                    f"No encuentro el App ID **{appid}** en la tienda de Steam. Comprueba el "
+                    "número o, si estás seguro de que es ese, vuélvelo a lanzar poniendo "
+                    "el parámetro `nombre`.")
+                return
+            try:
+                noticias = await self._noticias(session, appid)
+            except Exception as exc:
+                log.warning("Fallo pidiendo noticias de %s al añadirlo: %s", appid, exc)
+                noticias = []
+
+        ya_estaba = self._juego(appid)
+        juego = {
+            "appid": appid,
+            "rol": rol.id if rol else (ya_estaba or {}).get("rol", 0),
+            "nombre": (nombre or en_steam or (ya_estaba or {}).get("nombre")
+                       or f"App {appid}").strip()[:80],
+            "emoji": (emoji or (ya_estaba or {}).get("emoji") or "📰").strip()[:32],
+        }
+        self._juegos = [j for j in self._juegos if j["appid"] != appid] + [juego]
+        self._guardar_juegos()
+
+        # Se apunta por dónde va el feed sin publicar el histórico, igual que en
+        # la primera vuelta de cualquier juego.
+        guardado = self._estado.setdefault(str(appid), {})
+        if noticias and not guardado.get("date"):
+            guardado.update(date=noticias[0].get("date") or 0, gid=noticias[0].get("gid"))
+        self._guardar()
+
+        canal = self.bot.get_channel(config.STEAM_NEWS_CHANNEL_ID)
+        hilo = None
+        if canal is not None:
+            await self._presentar(canal, juego)          # crea el hilo y lo estrena
+            hilo = await self._hilo(canal, juego)
+            self._guardar()
+
+        e = discord.Embed(
+            title=f"{juego['emoji']} {juego['nombre']}",
+            url=f"https://store.steampowered.com/app/{appid}",
+            description=("Juego **actualizado**." if ya_estaba
+                         else "Juego **añadido** a las noticias de Steam."),
+            color=_COLOR)
+        e.set_thumbnail(url=_capsula(appid))
+        e.add_field(name="🆔 App ID", value=str(appid), inline=True)
+        e.add_field(name="🔔 Avisa a",
+                    value=f"<@&{juego['rol']}>" if juego["rol"] else "*nadie*", inline=True)
+        e.add_field(name="🧵 Hilo",
+                    value=hilo.mention if hilo else "*(no he podido crearlo)*", inline=True)
+        e.add_field(
+            name="📰 Anuncios oficiales",
+            value=(f"{len(noticias)} en el feed · se publicará la próxima que saquen"
+                   if noticias else "ninguno todavía; se publicará lo que saquen"),
+            inline=False)
+        e.set_footer(text="Guardado en data/steam_juegos.json · no hace falta reiniciar el bot")
+        await interaction.followup.send(embed=e,
+                                        allowed_mentions=discord.AllowedMentions.none())
+
+    @app_commands.command(name="noticias_borrar",
+                          description="Solo staff: deja de vigilar un juego de Steam")
+    @app_commands.describe(appid="App ID del juego que se deja de vigilar",
+                           borrar_hilo="Borra también el hilo con todas sus noticias")
+    async def noticias_borrar(self, interaction: discord.Interaction, appid: int,
+                              borrar_hilo: bool = False):
+        if not self._staff(interaction):
+            await interaction.response.send_message("Esto es cosa del staff.", ephemeral=True)
+            return
+        juego = self._juego(appid)
+        if juego is None:
+            await interaction.response.send_message(
+                f"No estoy vigilando el App ID **{appid}**. Míralos con `/noticias_lista`.",
+                ephemeral=True)
+            return
+        if not any(j["appid"] == appid for j in self._juegos):
+            await interaction.response.send_message(
+                f"**{juego['nombre']}** viene de `STEAM_NEWS_JUEGOS` (el `.env.avisos`), "
+                "así que hay que quitarlo de ahí y reiniciar el bot.", ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True, ephemeral=True)
+
+        self._juegos = [j for j in self._juegos if j["appid"] != appid]
+        self._guardar_juegos()
+        guardado = self._estado.pop(str(appid), {})
+        self._guardar()
+
+        nota = ""
+        if guardado.get("hilo") and borrar_hilo:
+            try:
+                hilo = await self.bot.fetch_channel(guardado["hilo"])
+                await hilo.delete()
+                nota = " El hilo también se ha borrado."
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException) as exc:
+                log.info("No pude borrar el hilo de %s: %s", juego["nombre"], exc)
+                nota = " El hilo no he podido borrarlo, bórralo a mano."
+        elif guardado.get("hilo"):
+            nota = " El hilo se queda con lo que ya se publicó."
+        await interaction.followup.send(
+            f"Dejo de vigilar **{juego['nombre']}** (`{appid}`).{nota}")
+
+    @app_commands.command(name="noticias_lista",
+                          description="Solo staff: juegos vigilados en las noticias de Steam")
+    async def noticias_lista(self, interaction: discord.Interaction):
+        if not self._staff(interaction):
+            await interaction.response.send_message("Esto es cosa del staff.", ephemeral=True)
+            return
+        juegos = self.juegos()
+        if not juegos:
+            await interaction.response.send_message(
+                "No vigilo ningún juego todavía. Añade uno con `/noticias_juego appid:730`.",
+                ephemeral=True)
+            return
+        propios = {j["appid"] for j in self._juegos}
+        e = discord.Embed(
+            title="📰 Juegos vigilados en Steam",
+            description=(f"Canal: <#{config.STEAM_NEWS_CHANNEL_ID}> · "
+                         f"cada **{config.STEAM_NEWS_INTERVAL} min**"),
+            color=_COLOR)
+        for juego in sorted(juegos, key=lambda j: j["nombre"].lower())[:24]:
+            guardado = self._estado.get(str(juego["appid"]), {})
+            lineas = [
+                f"🆔 `{juego['appid']}` · {'comando' if juego['appid'] in propios else '.env'}",
+                "🔔 " + (f"<@&{juego['rol']}>" if juego["rol"] else "*sin rol*"),
+                "🧵 " + (f"<#{guardado['hilo']}>" if guardado.get("hilo") else "*sin hilo*"),
+            ]
+            if guardado.get("date"):
+                lineas.append(f"🕒 <t:{int(guardado['date'])}:R>")
+            e.add_field(name=f"{juego['emoji']} {juego['nombre']}"[:256],
+                        value="\n".join(lineas), inline=True)
+        e.set_footer(
+            text=(f"Los hilos se remozan cada día a las "
+                  f"{config.STEAM_NEWS_KEEPALIVE_HOUR:02d}:00 ({config.TIMEZONE})")
+            if config.STEAM_NEWS_KEEPALIVE
+            else "Keep-alive de hilos desactivado (STEAM_NEWS_KEEPALIVE)")
+        await interaction.response.send_message(
+            embed=e, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+
+    @noticias_borrar.autocomplete("appid")
+    async def _auto_appid(self, interaction: discord.Interaction, actual: str):
+        """Sugiere los juegos que ya se vigilan al escribir el App ID."""
+        opciones = []
+        for juego in self.juegos():
+            if actual and actual not in str(juego["appid"]) \
+                    and actual.lower() not in juego["nombre"].lower():
+                continue
+            etiqueta = f"{juego['emoji']} {juego['nombre']} ({juego['appid']})"
+            opciones.append(app_commands.Choice(name=etiqueta[:100], value=juego["appid"]))
+        return opciones[:25]
 
 
 async def setup(bot):

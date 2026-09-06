@@ -70,6 +70,7 @@ data/reaction_roles.json
 data/cs_links.json
 data/steam_links.json
 data/steam_news.json
+data/steam_juegos.json
 
 # Credenciales de Google Drive (cuenta de servicio)
 data/gdrive.json

@@ -10,6 +10,18 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
 ---
 
+## [1.4.0.f0] - 2026-09-06 · ✨ feature
+### ✨ Añadido
+- 🧵 **Los hilos de noticias ya no se archivan**: Discord cierra un hilo si nadie habla en él (7 días como mucho) y entonces desaparece de la lista del canal. Ahora, **cada día a las 11:00** (`STEAM_NEWS_KEEPALIVE_HOUR`, hora de `TIMEZONE`), el bot pasa por todos los hilos, **desarchiva** el que se hubiera cerrado, suelta un mensaje y **lo borra al momento**: cuenta como actividad, así que el contador de archivado vuelve a cero, y no queda rastro en el hilo. Se puede apagar con `STEAM_NEWS_KEEPALIVE=false` y probar a mano con `/noticias mantener:True`.
+- 🎮 **`/noticias_juego`: añadir juegos por App ID desde Discord**, sin tocar el `.env.avisos` ni reiniciar el bot. Le pasas el `appid` (el número de `store.steampowered.com/app/730/`) y, si quieres, el `rol` al que pingar, el `nombre` y el `emoji`. Comprueba que el App ID existe **en la tienda de Steam** y coge de ahí el nombre si no se lo das, crea el hilo, lo estrena y **apunta por dónde va el feed sin publicar el histórico**. Si el juego ya estaba, lo actualiza (y le cambia el nombre al hilo si hace falta).
+- 🗑️ **`/noticias_borrar`**: deja de vigilar un juego, con autocompletado de los que hay puestos. Con `borrar_hilo:True` se lleva también el hilo y sus noticias.
+- 📋 **`/noticias_lista`**: todos los juegos vigilados de un vistazo — App ID, si viene del comando o del `.env.avisos`, rol al que avisa, hilo y cuándo fue su última noticia.
+
+### 🧠 Mejorado
+- 📐 **Noticias a ancho máximo**: Discord estrecha un embed hasta el texto más largo **salvo que lleve imagen**, y entonces lo estira al ancho máximo. Como no todas las noticias traen foto, las que no la llevan van ahora con un **PNG transparente de 1024x2 px** (88 bytes, embebido en el propio código) que no se ve pero fuerza el ancho máximo. El mismo parche va en el mensaje de estreno del hilo. Resultado: las mismas noticias ocupan bastante menos alto y hay que scrollear mucho menos.
+- ✂️ **Se enseña más texto de cada noticia** (de 1400 a 2200 caracteres, que ahora caben en menos líneas) y, cuando hay que cortar, se remata con un enlace **«Seguir leyendo en Steam»** en vez del `[…]` seco de antes.
+- ⚙️ **Los juegos ya no viven solo en el `.env.avisos`**: se fusionan los de `STEAM_NEWS_JUEGOS` con los de `data/steam_juegos.json` (los del comando), y si un appid está en los dos manda el del comando. El módulo arranca aunque no haya ningún juego configurado, para poder añadirlos en caliente. Como el fichero está en `data/`, entra en los backups automáticos.
+
 ## [1.3.0.f2] - 2026-09-02 · 🛠️ fix
 ### ✨ Añadido
 - 🧵 **Mensaje de estreno de cada hilo de noticias**: hasta ahora el hilo de un juego no aparecía hasta que ese juego publicaba algo, así que el canal se veía vacío y no había forma de saber si estaba bien configurado. Ahora, la primera vez que el bot ve un juego, le crea el hilo y suelta dentro una presentación con **el rol al que va a avisar**, el App ID y cada cuánto comprueba. Sale **una sola vez por juego** y **no pinga a nadie** (el rol se enseña, pero sin notificar: todavía no lo tiene nadie). Añadir un juego nuevo a `STEAM_NEWS_JUEGOS` le crea su hilo en la siguiente vuelta.

@@ -211,6 +211,12 @@ STEAM_NEWS_CHANNEL_ID = _int("STEAM_NEWS_CHANNEL_ID")      # canal donde van los
 STEAM_NEWS_JUEGOS = _juegos_steam("STEAM_NEWS_JUEGOS")     # appid:rol:Nombre[:emoji], por comas
 STEAM_NEWS_INTERVAL = max(5, _int("STEAM_NEWS_INTERVAL", 20))   # minutos entre comprobaciones
 STEAM_NEWS_MAX = max(1, _int("STEAM_NEWS_MAX", 3))         # noticias por juego y vuelta (anti-avalancha)
+# Los hilos de Discord se archivan solos si nadie habla en ellos (7 dias como
+# maximo). Para que no se cierren, el bot pasa cada dia a esta hora por cada
+# hilo, suelta un mensaje y lo borra al momento: el hilo cuenta como activo y
+# no queda rastro. Hora local (TIMEZONE).
+STEAM_NEWS_KEEPALIVE = _bool("STEAM_NEWS_KEEPALIVE", True)
+STEAM_NEWS_KEEPALIVE_HOUR = min(23, max(0, _int("STEAM_NEWS_KEEPALIVE_HOUR", 11)))
 
 # --- 20) Alertas de salud de la máquina (DM al owner) ---
 HEALTH_INTERVAL = max(1, _int("HEALTH_INTERVAL", 5))      # minutos entre comprobaciones
