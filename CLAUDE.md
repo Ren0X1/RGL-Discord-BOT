@@ -5,7 +5,7 @@ Raspberry Pi Zero 2 W. Servidor privado de colegas ("la man cave"): gamers de
 Counter-Strike y Rust, humor de cachondeo entre amigos.
 
 - **Repo**: https://github.com/Ren0X1/RGL-Discord-BOT (rama `main`)
-- **Versión actual**: 1.5.0.f0
+- **Versión actual**: 1.5.1.f0
 - **Autor**: Ren0X1 (renox) — responder siempre **en español**, directo y sin florituras.
 
 > Este fichero es el manual del proyecto y **entra en los backups automáticos**
@@ -194,7 +194,7 @@ segundo no existe, esas funciones simplemente quedan apagadas. Las plantillas so
 | `botinfo` | `/bot` (versión, uptime, latencia, host) + resumen del sistema al arrancar. |
 | `csstats` | `/cs`, `/cs_vincular`, `/cs_desvincular`, `/cs_comparar` (API de Leetify). |
 | `events` | `/evento` con imagen y avisos con antelación. |
-| `github` | Vigila **usuarios** de GitHub: releases, commits y despliegues de todos sus repos. Ver sección propia. |
+| `github` | Vigila **usuarios** de GitHub: releases, despliegues y repos nuevos. Ver sección propia. |
 | `health` | Vigila temperatura/RAM/disco y avisa por DM al owner. |
 | `levels` | XP por participar, `/rank`, `/leaderboard`, `/xp_dar`, `/xp_reset`. |
 | `logs` | Registro de auditoría estilo MEE6. |
@@ -340,7 +340,7 @@ en la vuelta siguiente. Al vivir en `data/`, la lista entra en los backups.
 
 ---
 
-## `github` — releases, commits y despliegues
+## `github` — releases y despliegues
 
 Vigila **usuarios**, no repos sueltos: se pone `GITHUB_USERS=Ren0X1` y el bot se
 baja todos sus repos públicos y los sigue. Al crear un repo nuevo no hay que
@@ -351,13 +351,14 @@ Qué publica en `GITHUB_CHANNEL_ID`:
 | Aviso | Cuándo | Pinga |
 |---|---|---|
 | 🚀 **Release** | tag nueva en `releases/latest` | `GITHUB_RELEASES_MENTION` (@everyone) |
-| 📤 **Commits** | push a la rama por defecto; se agrupan en un solo embed | `GITHUB_COMMITS_MENTION` (vacío) |
 | 🌐 **Despliegue** | un *Deployment* de GitHub termina (Pages, Vercel…) | `GITHUB_DEPLOYS_MENTION` (vacío) |
-| 📁 **Repo nuevo** | aparece un repo que no estaba | `GITHUB_COMMITS_MENTION` |
+| 📁 **Repo nuevo** | aparece un repo que no estaba | `GITHUB_REPOS_MENTION` (vacío) |
 
-Los commits están porque **hay repos que no sacan releases** (PibesMecanicos
-publica web y no etiqueta nada). Los despliegues son la otra mitad de lo mismo:
-el aviso lleva el estado (🟢/🔴) y el enlace de la web que se acaba de publicar.
+**Los commits sueltos no se anuncian.** Se probó (cada push a la rama por
+defecto, agrupado en un embed) y llenaba el canal de ruido: lo que interesa es
+la versión publicada, no cada commit. Para los repos que no etiquetan releases
+(PibesMecanicos publica web y no saca tags) queda el aviso de despliegue, que
+lleva el estado (🟢/🔴) y el enlace de la web recién publicada.
 
 ### Cómo no se pasa del límite de la API
 Sin token, GitHub da **60 peticiones/hora**. La lista de repos de un usuario ya
@@ -527,7 +528,9 @@ el script y no interesa tenerlas dentro del propio backup.
     pregunta nada hasta que se mueva.
 17. **Vigilar repos uno a uno en el `.env`** → cada repo nuevo obligaba a editar
     el fichero y reiniciar. Se vigila el **usuario** entero.
-18. **Republicar un panel de roles mandando otro mensaje** → el canal se llenaba
+18. **Anunciar cada commit en el canal de GitHub** → ruido. Al canal solo le
+    interesa lo publicado: releases y despliegues. Se quitó en la 1.5.1.f0.
+19. **Republicar un panel de roles mandando otro mensaje** → el canal se llenaba
     de paneles viejos con botones que seguían funcionando. El panel recuerda su
     mensaje y se **edita**.
 
@@ -539,4 +542,4 @@ el script y no interesa tenerlas dentro del propio backup.
 - Transcripts al cerrar tickets.
 - Sistema de avisos (`/warn`, `/warnings`).
 - Alertas de salud ampliadas (autoreinicio / healthcheck).
-- Anuncios de GitHub para PRs e issues (ya están releases, commits y despliegues).
+- Anuncios de GitHub para PRs e issues (ya están releases y despliegues).

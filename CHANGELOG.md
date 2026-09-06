@@ -10,6 +10,16 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
 ---
 
+## [1.5.1.f0] - 2026-09-07 · 🧹 limpieza
+### 🗑️ Quitado
+- 📤 **Fuera los avisos de commits**. Anunciar cada push a la rama principal llenaba el canal de ruido: lo que interesa es la **versión publicada**, no cada commit. Se van el aviso, `GITHUB_AVISAR_COMMITS`, `GITHUB_COMMITS_MAX` y `GITHUB_COMMITS_MENTION`, y con ellos la petición de commits por repo (una llamada menos a la API en cada vuelta).
+
+### 🧠 Mejorado
+- 🔔 El aviso de 📁 **repo nuevo** ya tiene su propia mención, `GITHUB_REPOS_MENTION` (antes iba con la de los commits). Los `.env` viejos siguen valiendo: si no está puesta, se usa `GITHUB_COMMITS_MENTION`.
+- 🚀 En el canal de GitHub se quedan **releases**, **despliegues** y **repos nuevos**.
+
+---
+
 ## [1.5.0.f0] - 2026-09-07 · ✨ feature
 ### ✨ Añadido
 - 🐙 **Se vigilan usuarios de GitHub enteros, no repos sueltos**: se pone `GITHUB_USERS=Ren0X1` en el `.env.avisos` y el bot se baja **todos los repos públicos** de ese usuario y los sigue. Crear un repo nuevo ya no obliga a editar el `.env` ni a reiniciar: aparece solo, y encima se anuncia con un 📁 **Repo nuevo**. `GITHUB_REPOS` se queda para seguir repos de otra gente.

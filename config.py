@@ -225,13 +225,14 @@ GITHUB_CHANNEL_ID = _int("GITHUB_CHANNEL_ID") or _int("GITHUB_RELEASES_CHANNEL_I
 GITHUB_INTERVAL = max(5, _int("GITHUB_INTERVAL") or _int("GITHUB_RELEASES_INTERVAL", 15))
 GITHUB_INCLUIR_FORKS = _bool("GITHUB_INCLUIR_FORKS", False)   # los forks suelen ser ruido
 GITHUB_AVISAR_RELEASES = _bool("GITHUB_AVISAR_RELEASES", True)
-GITHUB_AVISAR_COMMITS = _bool("GITHUB_AVISAR_COMMITS", True)   # para los repos que no sacan releases
 GITHUB_AVISAR_DEPLOYS = _bool("GITHUB_AVISAR_DEPLOYS", True)   # Deployments de GitHub (Pages y demás)
 GITHUB_AVISAR_REPOS = _bool("GITHUB_AVISAR_REPOS", True)       # repos nuevos del usuario
-GITHUB_COMMITS_MAX = max(1, _int("GITHUB_COMMITS_MAX", 5))     # commits que se listan por aviso
+# Los commits sueltos no se anuncian: era ruido y lo que importa es la release.
 GITHUB_RELEASES_MENTION = os.getenv("GITHUB_RELEASES_MENTION", "@everyone")   # qué pingar (vacío = nada)
-GITHUB_COMMITS_MENTION = os.getenv("GITHUB_COMMITS_MENTION", "")   # los commits, por defecto sin pingar
-GITHUB_DEPLOYS_MENTION = os.getenv("GITHUB_DEPLOYS_MENTION", "")   # los despliegues, igual
+GITHUB_DEPLOYS_MENTION = os.getenv("GITHUB_DEPLOYS_MENTION", "")   # los despliegues, sin pingar
+# El aviso de repo nuevo heredaba la mención de los commits; se respeta el nombre viejo.
+GITHUB_REPOS_MENTION = os.getenv("GITHUB_REPOS_MENTION",
+                                 os.getenv("GITHUB_COMMITS_MENTION", ""))
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")   # opcional: más límite en la API de GitHub
 
 # --- 27) Noticias de Steam --- (se lee de .env.avisos)

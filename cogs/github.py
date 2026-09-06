@@ -1,5 +1,5 @@
 """
-Módulo 19 — Avisos de GitHub (releases, commits y repos nuevos).
+Módulo 19 — Avisos de GitHub (releases, despliegues y repos nuevos).
 
 Antes se vigilaba una lista de repos escrita a mano. Ahora se vigilan **usuarios**
 (GITHUB_USERS): el bot se baja todos los repos públicos de cada uno y los sigue
@@ -7,12 +7,13 @@ sin que haya que tocar el .env cada vez que se crea uno. GITHUB_REPOS queda para
 añadir repos sueltos de otra gente.
 
 Qué anuncia en GITHUB_CHANNEL_ID:
-  - 🚀 Releases nuevas (como siempre).
-  - 📤 Commits nuevos, para los repos que no sacan releases (PibesMecanicos y
-    compañía). Se agrupan en un solo aviso por repo y vuelta.
+  - 🚀 Releases nuevas.
   - 🌐 Despliegues (Deployments de GitHub: Pages, Vercel, lo que sea). Un repo
     puede no sacar ni una release y aun así publicar web cada dos por tres.
   - 📁 Repos nuevos del usuario.
+
+Los commits sueltos NO se anuncian a propósito: llenaban el canal de ruido y lo
+que interesa es la versión publicada, no cada push.
 
 Cómo ahorra peticiones: la lista de repos de un usuario ya trae el `pushed_at` de
 cada uno, así que solo se mira por dentro el repo que se ha movido. Las releases,
@@ -50,11 +51,9 @@ BARRIDO_MIN = 120
 # Repos por página al listar los de un usuario, y tope de páginas (3000 repos de sobra).
 POR_PAGINA = 100
 MAX_PAGINAS = 3
-# Cuántos shas ya anunciados se recuerdan por repo (anti-duplicado).
-RECORDAR_SHAS = 20
 
 COLOR_RELEASE = 0x2EA043
-COLOR_COMMITS = 0x58A6FF
+COLOR_INFO = 0x58A6FF
 COLOR_REPO = 0x8957E5
 COLOR_DEPLOY = 0x1F6FEB
 COLOR_FALLO = 0xDA3633
@@ -107,7 +106,6 @@ class GitHub(commands.Cog):
                 for repo, tag in viejo.items():
                     if isinstance(tag, str):
                         estado["repos"][repo] = {"tag": tag, "pushed": None,
-                                                 "sha": None, "vistos": [],
                                                  "deploy": None, "deploy_pend": False}
                 log.info("Migrados %d repos del estado antiguo.", len(estado["repos"]))
         except (OSError, ValueError):
@@ -121,7 +119,7 @@ class GitHub(commands.Cog):
 
     def _repo_estado(self, repo):
         return self._estado.setdefault("repos", {}).setdefault(
-            repo, {"tag": None, "pushed": None, "sha": None, "vistos": [],
+            repo, {"tag": None, "pushed": None,
                    "deploy": None, "deploy_pend": False})
 
     # ---------- API ----------
@@ -246,17 +244,14 @@ class GitHub(commands.Cog):
             avisos += 1
 
         # Repo recién fichado: se apunta por dónde va y se corta aquí. Mirarle las
-        # releases, los commits y los despliegues a los 15 repos de golpe se comía
-        # de una sentada las 60 peticiones/hora que da la API sin token.
+        # releases y los despliegues a los 15 repos de golpe se comía de una
+        # sentada las 60 peticiones/hora que da la API sin token.
         if primera:
             estado["pushed"] = pushed
             return avisos
 
         if config.GITHUB_AVISAR_RELEASES and (movido or barrido or estado.get("tag") is None):
             avisos += await self._releases(session, canal, nombre, estado)
-
-        if config.GITHUB_AVISAR_COMMITS and movido:
-            avisos += await self._commits(session, canal, repo, estado)
 
         # Un despliegue tarda un rato en terminar: si se pilla a medias se marca
         # pendiente y se vuelve a mirar en la vuelta siguiente, aunque el repo no
@@ -309,73 +304,6 @@ class GitHub(commands.Cog):
             emb.set_thumbnail(url=autor["avatar_url"])
         texto = f"📦 **{repo}** acaba de sacar **{nombre}**"
         await self._enviar(canal, config.GITHUB_RELEASES_MENTION, texto, emb)
-
-    # ---------- commits ----------
-    async def _commits(self, session, canal, repo, estado):
-        nombre = repo["full_name"]
-        rama = repo.get("default_branch") or "main"
-        params = {"sha": rama, "per_page": str(config.GITHUB_COMMITS_MAX + 5)}
-        # Sin sha de referencia (repo recién fichado) se acota por fecha: solo lo
-        # que haya entrado después del último push que teníamos apuntado.
-        if not estado.get("sha") and estado.get("pushed"):
-            params["since"] = estado["pushed"]
-        lista = await self._get(session, f"/repos/{nombre}/commits", params)
-        if not isinstance(lista, list) or not lista:
-            return 0
-
-        cabeza = lista[0].get("sha")
-        anterior = estado.get("sha")
-        nuevos = []
-        for c in lista:
-            sha = c.get("sha")
-            if not sha or sha == anterior:
-                break
-            if sha in (estado.get("vistos") or []):
-                continue
-            nuevos.append(c)
-
-        estado["sha"] = cabeza
-        estado["vistos"] = [c.get("sha") for c in lista][:RECORDAR_SHAS]
-        if not nuevos:
-            return 0
-        if anterior is None and not params.get("since"):
-            return 0        # primera vez que se mira el repo: solo apuntar
-        await self._anunciar_commits(canal, repo, nuevos, anterior, cabeza)
-        return 1
-
-    async def _anunciar_commits(self, canal, repo, commits, anterior, cabeza):
-        nombre = repo["full_name"]
-        rama = repo.get("default_branch") or "main"
-        total = len(commits)
-        if anterior:
-            url = f"https://github.com/{nombre}/compare/{anterior[:12]}...{cabeza[:12]}"
-        else:
-            url = f"https://github.com/{nombre}/commits/{rama}"
-
-        lineas = []
-        for c in commits[:config.GITHUB_COMMITS_MAX]:
-            sha = (c.get("sha") or "")[:7]
-            info = c.get("commit") or {}
-            msg = (info.get("message") or "").split("\n")[0].strip()
-            if len(msg) > 90:
-                msg = msg[:90].rstrip() + "…"
-            msg = discord.utils.escape_markdown(msg)
-            autor = (c.get("author") or {}).get("login") or (info.get("author") or {}).get("name") or "?"
-            enlace = c.get("html_url") or f"https://github.com/{nombre}/commit/{c.get('sha')}"
-            lineas.append(f"[`{sha}`]({enlace}) {msg} — *{autor}*")
-        if total > config.GITHUB_COMMITS_MAX:
-            lineas.append(f"…y {total - config.GITHUB_COMMITS_MAX} más")
-
-        plural = "commits nuevos" if total != 1 else "commit nuevo"
-        emb = discord.Embed(title=f"📤 {total} {plural}", url=url,
-                            description="\n".join(lineas)[:4000], color=COLOR_COMMITS)
-        emb.set_author(name=nombre, url=f"https://github.com/{nombre}")
-        avatar = (repo.get("owner") or {}).get("avatar_url")
-        if avatar:
-            emb.set_thumbnail(url=avatar)
-        emb.set_footer(text=f"GitHub · rama {rama}")
-        texto = f"📤 **{nombre}** — {total} {plural}"
-        await self._enviar(canal, config.GITHUB_COMMITS_MENTION, texto, emb)
 
     # ---------- despliegues ----------
     async def _deploys(self, session, canal, repo, estado):
@@ -453,7 +381,7 @@ class GitHub(commands.Cog):
         avatar = (repo.get("owner") or {}).get("avatar_url")
         if avatar:
             emb.set_thumbnail(url=avatar)
-        await self._enviar(canal, config.GITHUB_COMMITS_MENTION,
+        await self._enviar(canal, config.GITHUB_REPOS_MENTION,
                            f"📁 Repo nuevo: **{nombre}**", emb)
 
     # ---------- envío ----------
@@ -469,7 +397,7 @@ class GitHub(commands.Cog):
 
     # ---------- comandos ----------
     @app_commands.command(name="github",
-                          description="Comprueba ya las releases y commits de los repos vigilados")
+                          description="Comprueba ya las releases de los repos vigilados")
     @app_commands.checks.has_permissions(manage_guild=True)
     async def cmd_github(self, interaction: discord.Interaction):
         if not self._activo:
@@ -503,19 +431,17 @@ class GitHub(commands.Cog):
             title="🐙 Repos vigilados",
             description=f"**Usuarios:** {usuarios}\n"
                         f"**Repos sueltos:** {', '.join(config.GITHUB_REPOS) or '—'}",
-            color=COLOR_COMMITS)
+            color=COLOR_INFO)
         lineas = []
         for nombre in sorted(repos, key=lambda n: repos[n].get("pushed_at") or "", reverse=True):
             e = self._estado.get("repos", {}).get(nombre, {})
-            marca = e.get("tag") or (e.get("sha") or "")[:7] or "—"
+            marca = e.get("tag") or "—"
             lineas.append(f"`{nombre}` · {marca} · {(repos[nombre].get('pushed_at') or '')[:10]}")
         emb.add_field(name=f"Total: {len(repos)}",
                       value="\n".join(lineas)[:1024] or "—", inline=False)
         avisos = []
         if config.GITHUB_AVISAR_RELEASES:
             avisos.append("releases")
-        if config.GITHUB_AVISAR_COMMITS:
-            avisos.append("commits")
         if config.GITHUB_AVISAR_DEPLOYS:
             avisos.append("despliegues")
         if config.GITHUB_AVISAR_REPOS:
