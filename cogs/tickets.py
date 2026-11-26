@@ -24,13 +24,13 @@ import asyncio
 import datetime
 import logging
 import os
-import sqlite3
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
 import config
+from cogs.util import conectar_db
 
 log = logging.getLogger("tickets")
 
@@ -89,8 +89,7 @@ class ConfirmarView(discord.ui.View):
 class Tickets(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-        self.db = sqlite3.connect(DB_PATH, check_same_thread=False)
+        self.db = conectar_db(DB_PATH)
         self.db.execute(
             """CREATE TABLE IF NOT EXISTS tickets (
                    id INTEGER PRIMARY KEY AUTOINCREMENT,

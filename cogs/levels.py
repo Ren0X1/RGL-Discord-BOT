@@ -20,7 +20,6 @@ acumulados por nivel (estilo MEE6), así que cada nivel cuesta un poco más.
 import os
 import time
 import random
-import sqlite3
 import logging
 
 import discord
@@ -28,6 +27,7 @@ from discord import app_commands
 from discord.ext import commands
 
 import config
+from cogs.util import conectar_db
 
 log = logging.getLogger("levels")
 _rng = random.SystemRandom()
@@ -63,8 +63,7 @@ class Levels(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self._ultimo = {}     # (gid, uid) -> monotonic del último XP
-        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-        self.db = sqlite3.connect(DB_PATH, check_same_thread=False)
+        self.db = conectar_db(DB_PATH)
         self.db.execute(
             """CREATE TABLE IF NOT EXISTS niveles (
                    guild_id INTEGER NOT NULL,

@@ -18,12 +18,12 @@ El bot necesita el permiso "Gestionar eventos" (Manage Events).
 import datetime
 import logging
 
-import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
 import config
+from cogs import httputil
 from cogs.reminders import parse_when, now_utc
 
 log = logging.getLogger("events")
@@ -44,8 +44,8 @@ def ceil_15(dt: datetime.datetime) -> datetime.datetime:
 async def descargar_imagen(url: str):
     """Descarga la imagen de la URL y devuelve sus bytes, o None si falla."""
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+        async with httputil.sesion(15) as session:
+            async with session.get(url) as resp:
                 if resp.status != 200:
                     return None
                 ctype = resp.headers.get("Content-Type", "")

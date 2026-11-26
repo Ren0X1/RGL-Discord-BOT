@@ -1,8 +1,8 @@
 # 🤖 RGL Discord BOT
 
-![Python](https://img.shields.io/badge/Python-3.13-3776AB?style=flat-square&logo=python&logoColor=white) ![discord.py](https://img.shields.io/badge/discord.py-2.7-5865F2?style=flat-square&logo=discord&logoColor=white) ![Flask](https://img.shields.io/badge/Flask-3.1-000000?style=flat-square&logo=flask&logoColor=white) ![SQLite](https://img.shields.io/badge/SQLite-3-003B57?style=flat-square&logo=sqlite&logoColor=white) ![Raspberry Pi](https://img.shields.io/badge/Raspberry%20Pi-Zero%202%20W-A22846?style=flat-square&logo=raspberrypi&logoColor=white) ![Google Drive](https://img.shields.io/badge/Google%20Drive-backups-4285F4?style=flat-square&logo=googledrive&logoColor=white) ![Tailscale](https://img.shields.io/badge/Tailscale-remote%20access-242424?style=flat-square&logo=tailscale&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.15-3776AB?style=flat-square&logo=python&logoColor=white) ![discord.py](https://img.shields.io/badge/discord.py-2.7-5865F2?style=flat-square&logo=discord&logoColor=white) ![SQLite](https://img.shields.io/badge/SQLite-3-003B57?style=flat-square&logo=sqlite&logoColor=white) ![Raspberry Pi](https://img.shields.io/badge/Raspberry%20Pi-Zero%202%20W-A22846?style=flat-square&logo=raspberrypi&logoColor=white) ![Google Drive](https://img.shields.io/badge/Google%20Drive-backups-4285F4?style=flat-square&logo=googledrive&logoColor=white) ![Tailscale](https://img.shields.io/badge/Tailscale-remote%20access-242424?style=flat-square&logo=tailscale&logoColor=white)
 
-**All-in-one Discord bot with a web control panel**, self-hosted on a **Raspberry Pi Zero 2 W**. It runs a whole private gaming server: moderation and audit logs, reminders, events, polls, tickets, XP levels, counter channels, scrims, CS2 and Rust stats, Steam news, an AI that chats like one of the group, and automatic backups to Google Drive — plus a hacker-themed web panel to manage the bot **and the machine** from any browser, remotely included.
+**All-in-one Discord bot**, self-hosted on a **Raspberry Pi Zero 2 W**. It runs a whole private gaming server: moderation and audit logs, reminders, events, polls, tickets, XP levels, counter channels, scrims, CS2 and Rust stats, Steam news, an AI that chats like one of the group, and automatic backups to Google Drive. It is managed from [ZeroDesk](https://github.com/Ren0X1/ZeroDesk), the web panel that also runs on the Pi.
 
 ---
 
@@ -10,16 +10,15 @@
 
 | Area | Technology |
 |------|------------|
-| Language | Python 3.13 |
+| Language | Python 3.15 (installed with [uv](https://docs.astral.sh/uv/)) |
 | Bot | [discord.py](https://discordpy.readthedocs.io/) 2.7 (slash commands, buttons, persistent views) |
-| Web panel | Flask 3 · waitress (HTTP) · werkzeug TLS (HTTPS) |
 | Database | SQLite (levels, reminders, polls, tickets) |
 | State | JSON files under `data/` (AI memory, Steam links, news, reaction roles) |
 | Config | python-dotenv — `.env` + `.env.avisos` |
-| Panel frontend | Vanilla HTML + CSS + JS (charts drawn on `<canvas>`, zero dependencies) |
 | AI | Any OpenAI-compatible API — [Groq](https://groq.com/) by default (free, no card) |
-| Backups | Google Drive API (OAuth, user account) |
-| Services | systemd — `discordbot`, `panel`, `bot-startup` |
+| HTTP | aiohttp — one shared session for the whole process |
+| Backups | Google Drive REST API (OAuth, user account) |
+| Services | systemd — `discordbot`, `bot-startup` |
 | Deployment | Git (the Pi syncs itself from GitHub) + startup/update scripts |
 | Remote access | Tailscale (WireGuard VPN, no ports opened) |
 | Hardware | Raspberry Pi Zero 2 W (Raspberry Pi OS) |
@@ -56,7 +55,7 @@ Every feature lives in its own *cog* inside `cogs/`:
 - 🎚️ **Levels and XP** (`levels`) — XP for taking part, `/rank` with a progress bar, `/leaderboard` top 10 and the staff commands `/xp_dar` and `/xp_reset`.
 - 🔘 **Button roles** (`reactionroles`) — panels configured by command with persistent buttons: `/roles_crear`, `/roles_add`, `/roles_publicar`…
 - 💾 **Backups** (`backup`) — zips `data/`, every `.env*`, the project manual and the systemd units and uploads them to **Google Drive** on a schedule, keeping the last N. `/backup`, `/backups`.
-- 🧠 **AI chat** (`ai_chat`) — in a dedicated channel the bot reads ~1 in 4 messages (configurable) and replies **following the thread**, talking **like one more of the group** instead of an assistant. Uses a **free** OpenAI-compatible API (Groq by default). It knows that when people say *the BOT* they mean her, reads the README to answer questions about commands, and splits long replies into several messages. Two-layer memory: **manual context** (`ai_context.json`, via `/ia_contexto`, `/ia_contexto_server`, `/ia_contextos`) and a **memory it builds and consolidates on its own** (`ai_saved.json`): it saves relevant facts, nicknames and catchphrases, merges duplicates and compacts on every write. It can also post a **daily summary** of the previous day's chat, and everything is editable from the web panel at `/ia`.
+- 🧠 **AI chat** (`ai_chat`) — in a dedicated channel the bot reads ~1 in 4 messages (configurable) and replies **following the thread**, talking **like one more of the group** instead of an assistant. Uses a **free** OpenAI-compatible API (Groq by default). It knows that when people say *the BOT* they mean her, reads the README to answer questions about commands, and splits long replies into several messages. Two-layer memory: **manual context** (`ai_context.json`, via `/ia_contexto`, `/ia_contexto_server`, `/ia_contextos`) and a **memory it builds and consolidates on its own** (`ai_saved.json`): it saves relevant facts, nicknames and catchphrases, merges duplicates and compacts on every write. It can also post a **daily summary** of the previous day's chat, and everything is editable from ZeroDesk.
 
 > 🔗 Steam accounts are linked **per game**: `/cs_vincular` and `/rust_vincular` keep their own account, because plenty of people play CS on one and Rust on another.
 
@@ -82,18 +81,12 @@ Every feature lives in its own *cog* inside `cogs/`:
 
 ---
 
-## 🖥️ Web control panel
+## 🖥️ Control panel
 
-Hacker-themed panel (green on black, matrix rain, scanlines) you open in a browser:
-
-- 📈 **Live bot status** and Pi **telemetry**: CPU, RAM, temperature, disk and uptime.
-- 📉 **History charts** for CPU/RAM/temperature (~30 min), drawn on `<canvas>` with no external libraries.
-- 📜 **Live log viewer**, auto-refreshing every 5 s with smart scrolling.
-- ✏️ **`.env` editor** from the browser, with secrets (token, passwords) masked.
-- 🧠 **AI page** (`/ia`): read and edit `ai_context.json` and `ai_saved.json`, and a switch to turn the chat on or off instantly.
-- 🎛️ **Actions**: start / stop / restart the bot, reboot the Pi and run a full update.
-- 🔒 **Security**: login with attempt limits and temporary per-IP lockout; optional **local HTTPS** (self-signed certificate).
-- 📱 **Phone app**: favicon + manifest + icons, so you can add it to your iPhone home screen as a full-screen app.
+The bot has no web panel of its own any more: everything it had (live status,
+logs, `.env` editor, AI memory editor and switch, restart / update actions) now
+lives in **[ZeroDesk](https://github.com/Ren0X1/ZeroDesk)**, the panel that
+already ran on the Pi to control the gaming PC. One panel, one service, less RAM.
 
 ---
 
@@ -114,8 +107,7 @@ Everything is read from two files (see `.env.example` and `.env.avisos.example` 
 - 🎫 **Tickets**: `TICKET_PANEL_CHANNEL_ID`, `TICKET_CATEGORY_ID`, `TICKET_STAFF_ROLE_IDS`
 - 🎮 **Game stats**: `STEAM_API_KEY`, `LEETIFY_API_KEY`, `CS_EMOJI`, `RUST_EMOJI`
 - 🧠 **AI**: `AI_CHANNEL_ID`, `AI_CHANCE`, `AI_API_BASE`, `AI_API_KEY`, `AI_MODEL`, `AI_SYSTEM_PROMPT`
-- 💾 **Backups**: `BACKUP_ENABLED`, `BACKUP_KEEP`, `BACKUP_INCLUDE_ENV`
-- 🖥️ **Panel**: `PANEL_PASSWORD`, `PANEL_PORT`, `PANEL_SECRET_KEY`, `PANEL_SSL_CERT`, `PANEL_SSL_KEY`
+- 💾 **Backups**: `BACKUP_ENABLED`, `BACKUP_KEEP`, `BACKUP_INCLUDE_ENV`, `BACKUP_ZERODESK_DIR`
 
 **`.env.avisos`** — only the things the bot watches, kept apart because these lists grow:
 
@@ -137,11 +129,7 @@ discord-bot/
 ├── .env.avisos.example   # template for what the bot watches
 ├── startup.sh            # on boot: updates the Pi, syncs with GitHub, restarts the bot
 ├── update.sh             # manual full update
-├── cogs/                 # one module per feature (27 of them)
-├── panel/                # web panel
-│   ├── app.py            # Flask server
-│   ├── templates/        # login, dashboard, config, ai
-│   └── static/           # favicon and PWA icons
+├── cogs/                 # one module per feature (27 of them) + shared helpers
 ├── scripts/              # helpers (Google Drive authorisation)
 └── data/                 # all persistent state (git-ignored)
 ```
@@ -150,28 +138,26 @@ discord-bot/
 
 ## 🚀 Deployment on the Raspberry Pi
 
-The bot and the panel run as **systemd** services and update themselves from GitHub on every boot.
+The bot runs as a **systemd** service and update themselves from GitHub on every boot.
 
 - `discordbot.service` — runs the bot (auto-restart).
-- `panel.service` — runs the web panel.
 - `bot-startup.service` — on boot runs `startup.sh`: `apt update/upgrade`, syncs the repo (`git reset --hard origin/main`), installs dependencies and restarts the bot.
 
 The workflow is: **changes → GitHub → the Pi syncs itself**. To apply them by hand:
 
 ```bash
 sudo bash /home/renox/discord-bot/startup.sh   # sync the repo and restart the bot
-sudo systemctl restart panel                   # apply panel changes
 cat ~/discord-bot/VERSION                      # always check what actually got deployed
 ```
 
 ### 🔐 Remote access (Tailscale)
 
-With [Tailscale](https://tailscale.com/) installed, the panel is reachable from anywhere **without opening a single router port**, end-to-end encrypted:
+With [Tailscale](https://tailscale.com/) installed, ZeroDesk (and with it the bot) is reachable from anywhere **without opening a single router port**, end-to-end encrypted:
 
 ```bash
 curl -fsSL https://tailscale.com/install.sh | sh
 sudo tailscale up
-tailscale ip -4              # private 100.x.y.z address to reach the panel
+tailscale ip -4              # private 100.x.y.z address of the Pi
 ```
 
 ---

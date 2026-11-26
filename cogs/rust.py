@@ -20,12 +20,12 @@ a la de CS la puede separar con /rust_vincular.
 
 import logging
 
-import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands
 
 import config
+from cogs import httputil
 from cogs import steamutil as su
 
 log = logging.getLogger("rust")
@@ -231,7 +231,7 @@ class Rust(commands.Cog):
                 await interaction.followup.send("Solo el staff puede vincular a otra persona.")
                 return
             objetivo = usuario
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20)) as session:
+        async with httputil.sesion(20) as session:
             steam64, err = await su.resolver_steam64(session, url)
         if err:
             await interaction.followup.send(f"⚠️ {err}")
@@ -271,7 +271,7 @@ class Rust(commands.Cog):
                     "o pásame la URL directamente.")
                 return
 
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=25)) as session:
+        async with httputil.sesion(25) as session:
             steam64, _etiqueta, err = await su.resolver_objetivo(session, interaction.guild, url, "rust")
             if err:
                 await interaction.followup.send(f"⚠️ {err}")
@@ -442,7 +442,7 @@ class Rust(commands.Cog):
 
         entradas = [x for x in (jugador1, jugador2, jugador3, jugador4) if x]
         cuentas, errores = [], []
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=40)) as session:
+        async with httputil.sesion(40) as session:
             total_logros = await self._total_logros_juego(session)
             for texto in entradas:
                 steam64, etiqueta, err = await su.resolver_objetivo(session, interaction.guild, texto, "rust")

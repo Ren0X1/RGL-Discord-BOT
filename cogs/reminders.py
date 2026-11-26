@@ -7,21 +7,21 @@ Comandos:
   /cancelar_recordatorio  id: <número>
 
 Los recordatorios se guardan en SQLite (data/reminders.db) para que sobrevivan
-a los reinicios del bot. Un bucle revisa cada 30s los que ya vencieron y te
+a los reinicios del bot. El bot duerme hasta que vence el siguiente y te
 escribe por privado.
 """
 
 import datetime
 import os
 import re
-import sqlite3
 import logging
 
 import discord
 from discord import app_commands
-from discord.ext import commands, tasks
+from discord.ext import commands
 
 import config
+from cogs.util import Programador, conectar_db
 
 log = logging.getLogger("reminders")
 
@@ -119,8 +119,7 @@ def parse_when(text: str):
 class Reminders(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-        self.db = sqlite3.connect(DB_PATH, check_same_thread=False)
+        self.db = conectar_db(DB_PATH)
         self.db.execute(
             """CREATE TABLE IF NOT EXISTS reminders (
                    id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -131,10 +130,11 @@ class Reminders(commands.Cog):
                )"""
         )
         self.db.commit()
-        self.check_reminders.start()
+        self._programador = Programador(bot, "recordatorios", self.check_reminders, self._proximo)
+        self._programador.arrancar()
 
     def cog_unload(self):
-        self.check_reminders.cancel()
+        self._programador.parar()
         self.db.close()
 
     # ---------- comandos ----------
@@ -160,6 +160,7 @@ class Reminders(commands.Cog):
             (interaction.user.id, dt.isoformat(), mensaje, now_utc().isoformat()),
         )
         self.db.commit()
+        self._programador.avisar()
         await interaction.response.send_message(
             f"✅ Listo. Te lo recordaré <t:{int(dt.timestamp())}:R> (<t:{int(dt.timestamp())}:f>).",
             ephemeral=True,
@@ -194,7 +195,12 @@ class Reminders(commands.Cog):
             await interaction.response.send_message("No encontré ese recordatorio tuyo.", ephemeral=True)
 
     # ---------- bucle ----------
-    @tasks.loop(seconds=30)
+    def _proximo(self):
+        fila = self.db.execute("SELECT MIN(remind_at) FROM reminders").fetchone()
+        if not fila or fila[0] is None:
+            return None
+        return datetime.datetime.fromisoformat(fila[0]).timestamp()
+
     async def check_reminders(self):
         ahora = now_utc().isoformat()
         rows = self.db.execute(
@@ -223,9 +229,6 @@ class Reminders(commands.Cog):
         if rows:
             self.db.commit()
 
-    @check_reminders.before_loop
-    async def before(self):
-        await self.bot.wait_until_ready()
 
 
 async def setup(bot):

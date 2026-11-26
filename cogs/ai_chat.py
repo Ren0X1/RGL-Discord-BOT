@@ -13,7 +13,7 @@ autoconsolidada.
   la IA aprende y CONSOLIDA sola: fusiona duplicados, quita lo viejo, compacta).
   En ambos cada usuario guarda id + nombre + mote.
 - Resumen diario opcional (AI_SUMMARY_CHANNEL_ID / AI_SUMMARY_HOUR).
-- Interruptor en vivo desde el panel mediante ai_state.json ({"enabled": bool}).
+- Interruptor en vivo desde ZeroDesk (el panel de la Pi) mediante ai_state.json ({"enabled": bool}).
 
 API compatible con OpenAI. Por defecto Groq (GRATIS): clave en
 https://console.groq.com -> AI_API_KEY.
@@ -29,12 +29,12 @@ import logging
 import unicodedata
 from datetime import time as dtime, datetime, timedelta, timezone
 
-import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
 import config
+from cogs import httputil
 
 log = logging.getLogger("ai_chat")
 _rng = random.SystemRandom()
@@ -51,6 +51,7 @@ CONTEXT_PATH = os.path.join(_DATA, "ai_context.json")
 SAVED_PATH = os.path.join(_DATA, "ai_saved.json")
 README_PATH = os.path.join(_RAIZ, "README.md")
 STATE_PATH = os.path.join(_DATA, "ai_state.json")
+_DIAS = ("lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo")
 MAX_DATOS = 18            # tope duro de datos por persona/servidor
 OBJETIVO_DATOS = 10       # a cuántos comprime la consolidación
 UMBRAL_CONSOLIDA = 14     # a partir de aquí, la tarea diaria fusiona
@@ -319,7 +320,8 @@ class AIChat(commands.Cog):
             'Devuelve SOLO JSON: {"datos":[{"texto":"","veces":N}]}.'
         )
         data = await self._api([{"role": "system", "content": sys},
-                                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}])
+                                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+                               temperatura=0.2)
         if not data:
             return None
         try:
@@ -480,8 +482,13 @@ class AIChat(commands.Cog):
             participantes = [(message.author.id, message.author.display_name)]
         return historial, participantes
 
-    def _construir_system(self, gid, participantes, incluir_readme=False):
+    def _construir_system(self, gid, participantes, incluir_readme=False, autor=None):
         partes = [config.AI_SYSTEM_PROMPT]
+        ahora = datetime.now(_TZ)
+        partes.append(f"Hoy es {_DIAS[ahora.weekday()]} {ahora:%d/%m/%Y} y son las {ahora:%H:%M}.")
+        if autor:
+            partes.append(f"Estás contestando al ÚLTIMO mensaje del chat, que es de {autor}. "
+                          "Los anteriores son contexto: úsalos para entender de qué va la cosa.")
         partes.append(
             "Si en el chat alguien habla del 'BOT', 'el bot' o la IA del servidor, se refieren a TI: "
             "respóndeles en primera persona, no en tercera.")
@@ -522,16 +529,18 @@ class AIChat(commands.Cog):
 
     # ---------- responder ----------
     async def _generar(self, gid, historial, participantes, incluir_readme=False):
-        mensajes = [{"role": "system", "content": self._construir_system(gid, participantes, incluir_readme)}]
+        autor = next((m.author.display_name for m in reversed(historial)
+                      if not m.author.bot and (m.content or "").strip()), None)
+        mensajes = [{"role": "system", "content": self._construir_system(gid, participantes, incluir_readme, autor)}]
         for m in historial:
             contenido = (m.content or "").strip()
             if not contenido:
                 continue
             if self.bot.user and m.author.id == self.bot.user.id:
-                mensajes.append({"role": "assistant", "content": contenido[:400]})
+                mensajes.append({"role": "assistant", "content": contenido[:800]})
             else:
-                mensajes.append({"role": "user", "content": f"{m.author.display_name}: {contenido[:400]}"})
-        data = await self._api(mensajes)
+                mensajes.append({"role": "user", "content": f"{m.author.display_name}: {contenido[:800]}"})
+        data = await self._api(mensajes, temperatura=0.85)
         if not data:
             return None
         try:
@@ -564,8 +573,11 @@ class AIChat(commands.Cog):
             c = (m.content or "").strip()
             if not c:
                 continue
-            quien = "BOT" if (self.bot.user and m.author.id == self.bot.user.id) else m.author.display_name
-            lineas.append(f"{quien}: {c[:300]}")
+            # Lo que escriben los bots (el propio, avisos de nivel, música…) no dice
+            # nada de la gente: antes acababa en memoria como "X subió al nivel 1".
+            if m.author.bot:
+                continue
+            lineas.append(f"{m.author.display_name}: {c[:300]}")
         if len(lineas) < 2:
             log.info("Captura cancelada: solo %d mensajes con texto", len(lineas))
             return
@@ -586,17 +598,27 @@ class AIChat(commands.Cog):
             fichas.append(f"[{i}] {nombre}" + (f" (ya sabes: {'; '.join(ya)})" if ya else ""))
 
         sys = (
-            "Eres el sistema de memoria de un bot de Discord. Lee la CONVERSACIÓN y extrae SOLO hechos "
-            "NUEVOS, concretos y claramente dichos sobre estas personas o sobre el servidor (gustos, manías, "
-            "relaciones, curro, juegos, cosas que pasan). NO repitas ni reformules lo que ya se sabe. NO "
-            "inventes. Frases muy cortas. Identifica a cada persona por su NÚMERO [n]. Detecta motes/apodos. "
-            "En 'estilo' guarda expresiones o jerga típicas del grupo que aparezcan. Devuelve SOLO JSON con "
-            'la forma: {"servidor":[], "estilo":[], "usuarios":[{"n":1, "mote":"", "datos":[]}]}. '
-            "Si no hay nada nuevo, devuelve listas vacías.\n\nPERSONAS:\n" + "\n".join(fichas)
+            "Eres el sistema de memoria a largo plazo de un bot de Discord de un grupo de colegas. "
+            "Lee la CONVERSACIÓN y apunta SOLO lo que siga siendo verdad dentro de un mes y sirva para "
+            "conocer a la gente: gustos y manías, a qué juegan y en qué rol/arma/mapa, curro o estudios, "
+            "de dónde son, relaciones entre ellos, piques y bromas recurrentes, motes.\n"
+            "NO apuntes NUNCA: enlaces, que alguien compartió/pidió/dijo/preguntó algo concreto, citas "
+            "literales, subidas de nivel, avisos de bots, lo que hicieron en una partida suelta, planes "
+            "de hoy, ni nada que solo tenga sentido en esta conversación.\n"
+            "Ejemplo MALO: 'DaN1 compartió un enlace de Spotify'. Ejemplo BUENO: 'DaN1 escucha reguetón "
+            "a todas horas'.\n"
+            "Como mucho 2 datos por persona y 2 del servidor, frases de menos de 12 palabras, sin "
+            "inventar ni deducir de más, y nada que ya se sepa (ni reformulado). Lo normal es que NO haya "
+            "nada que apuntar: entonces devuelve listas vacías.\n"
+            "Identifica a cada persona por su NÚMERO [n]. En 'mote' pon solo un apodo que de verdad le "
+            "llamen. En 'estilo', expresiones o jerga propias del grupo (no palabras normales).\n"
+            'Devuelve SOLO JSON: {"servidor":[], "estilo":[], "usuarios":[{"n":1, "mote":"", "datos":[]}]}.'
+            "\n\nPERSONAS:\n" + "\n".join(fichas)
             + (("\n\nYA SABES DEL SERVIDOR: " + "; ".join(conocido_serv)) if conocido_serv else "")
         )
         data = await self._api([{"role": "system", "content": sys},
-                                {"role": "user", "content": "CONVERSACIÓN:\n" + "\n".join(lineas)}])
+                                {"role": "user", "content": "CONVERSACIÓN:\n" + "\n".join(lineas)}],
+                               temperatura=0.2)
         if not data:
             log.warning("Captura: la API no devolvió nada")
             return
@@ -738,25 +760,27 @@ class AIChat(commands.Cog):
         await self.bot.wait_until_ready()
 
     # ---------- API ----------
-    async def _api(self, mensajes):
+    async def _api(self, mensajes, temperatura=0.85):
+        """Llama al chat de la API. Temperatura baja para tareas de extraer o
+        resumir datos (memoria), algo más alta para charlar."""
         headers = {"Authorization": f"Bearer {config.AI_API_KEY}", "Content-Type": "application/json"}
         modelo = config.AI_MODEL or ""
-        payload = {"model": modelo, "messages": mensajes, "temperature": 1.0}
+        payload = {"model": modelo, "messages": mensajes, "temperature": temperatura}
 
         if _es_razonador(modelo):
             # Los modelos de razonamiento (gpt-oss, qwen3...) gastan tokens "pensando"
             # ANTES de escribir la respuesta. Con un presupuesto corto se quedaban sin
             # tokens y devolvían content vacío (el bot no respondía). Por eso:
-            #  - reasoning_effort bajo: piensan poco, que esto es cachondeo, no álgebra
+            #  - reasoning_effort (AI_REASONING, medium por defecto): con low respondía
+            #    rápido pero tonta; medium entiende bastante mejor el hilo
             #  - reasoning_format hidden: no queremos ver su chapa, solo la respuesta
             #  - presupuesto ampliado: el razonamiento no se come la respuesta
-            payload["reasoning_effort"] = "low"
+            payload["reasoning_effort"] = config.AI_REASONING
             payload["reasoning_format"] = "hidden"
             payload["max_completion_tokens"] = max(config.AI_MAX_TOKENS, MIN_TOKENS_RAZONADOR)
         else:
             payload["max_tokens"] = config.AI_MAX_TOKENS
-        timeout = aiohttp.ClientTimeout(total=25)
-        async with aiohttp.ClientSession(timeout=timeout) as s:
+        async with httputil.sesion(45) as s:
             async with s.post(f"{config.AI_API_BASE}/chat/completions", json=payload, headers=headers) as r:
                 if r.status != 200:
                     cuerpo = (await r.text())[:300]

@@ -1,9 +1,12 @@
 """
-Bot de Discord con 4 módulos:
-  - logs        -> registro de acciones del servidor (estilo MEE6)
-  - tempvoice   -> canales de voz temporales (join-to-create)
-  - reminders   -> recordatorios por DM con /recordatorio
-  - streams     -> aviso cuando alguien con cierto rol empieza a transmitir
+RGL Discord BOT — punto de entrada.
+
+Crea el bot, carga los módulos de ``cogs/`` (tupla ``COGS``) y sincroniza los
+slash commands en el servidor de ``GUILD_ID``. Toda la configuración sale de
+``config.py`` (que lee ``.env`` y ``.env.avisos``).
+
+Pensado para una Raspberry Pi Zero 2 W: una sola sesión HTTP para todo el
+proceso (``cogs/httputil.py``) y nada de bucles que despierten sin motivo.
 """
 
 import asyncio
@@ -13,6 +16,7 @@ import discord
 from discord.ext import commands
 
 import config
+from cogs import httputil
 
 logging.basicConfig(
     level=logging.INFO,
@@ -90,6 +94,12 @@ class MiBot(commands.Bot):
             synced = await self.tree.sync()
             log.info("Slash commands sincronizados globalmente (%d). Pueden tardar en propagarse.", len(synced))
 
+    async def close(self):
+        # Primero el bot (que aún puede usar la sesión al descargar cogs) y
+        # después la sesión HTTP compartida, para no dejar conexiones colgando.
+        await super().close()
+        await httputil.cerrar()
+
     async def on_command_error(self, ctx, error):
         # Al mencionar al bot ("@bot lo que sea"), discord.py intenta interpretar
         # el texto como un comando de prefijo y llena el log de CommandNotFound.
@@ -110,7 +120,8 @@ def main():
     if not config.TOKEN:
         raise SystemExit("Falta DISCORD_TOKEN en el archivo .env")
     bot = MiBot()
-    bot.run(config.TOKEN)
+    # log_handler=None: el logging ya está configurado arriba y así no se duplica
+    bot.run(config.TOKEN, log_handler=None)
 
 
 if __name__ == "__main__":

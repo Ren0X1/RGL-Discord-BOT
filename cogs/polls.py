@@ -18,13 +18,13 @@ import re
 import json
 import time
 import secrets
-import sqlite3
 import logging
 
 import discord
 from discord import app_commands
-from discord.ext import commands, tasks
+from discord.ext import commands
 
+from cogs.util import Programador, conectar_db
 log = logging.getLogger("polls")
 
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "polls.db")
@@ -72,8 +72,7 @@ class BotonVoto(discord.ui.DynamicItem[discord.ui.Button],
 class Polls(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-        self.db = sqlite3.connect(DB_PATH, check_same_thread=False)
+        self.db = conectar_db(DB_PATH)
         self.db.execute(
             """CREATE TABLE IF NOT EXISTS polls (
                    poll_id TEXT PRIMARY KEY,
@@ -90,10 +89,11 @@ class Polls(commands.Cog):
         )
         self.db.commit()
         self.bot.add_dynamic_items(BotonVoto)  # botones persistentes tras reinicio
-        self.cerrar_expiradas.start()
+        self._programador = Programador(bot, "encuestas", self.cerrar_expiradas, self._proximo_cierre)
+        self._programador.arrancar()
 
     def cog_unload(self):
-        self.cerrar_expiradas.cancel()
+        self._programador.parar()
         self.db.close()
 
     # ---------- crear ----------
@@ -146,6 +146,7 @@ class Polls(commands.Cog):
              interaction.user.id, pregunta, json.dumps(opciones), end_ts),
         )
         self.db.commit()
+        self._programador.avisar()
         log.info("Encuesta %s creada por %s (%d opciones, %ds)", pid, interaction.user, len(opciones), segundos)
 
     # ---------- votar ----------
@@ -166,7 +167,10 @@ class Polls(commands.Cog):
             f"✅ Has votado: **{opciones[idx]}**", ephemeral=True)
 
     # ---------- cerrar ----------
-    @tasks.loop(seconds=15)
+    def _proximo_cierre(self):
+        fila = self.db.execute("SELECT MIN(end_ts) FROM polls WHERE closed=0").fetchone()
+        return float(fila[0]) if fila and fila[0] is not None else None
+
     async def cerrar_expiradas(self):
         ahora = int(time.time())
         filas = self.db.execute(
@@ -220,9 +224,6 @@ class Polls(commands.Cog):
         self.db.commit()
         log.info("Encuesta %s cerrada (%d votos)", pid, total)
 
-    @cerrar_expiradas.before_loop
-    async def _antes(self):
-        await self.bot.wait_until_ready()
 
 
 async def setup(bot):

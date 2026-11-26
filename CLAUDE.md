@@ -1,11 +1,11 @@
 # RGL Discord BOT — contexto del proyecto
 
-Bot de Discord (Python / discord.py 2.7) + panel web Flask, autoalojado en una
+Bot de Discord (Python / discord.py 2.7), gestionado desde ZeroDesk y autoalojado en una
 Raspberry Pi Zero 2 W. Servidor privado de colegas ("la man cave"): gamers de
 Counter-Strike y Rust, humor de cachondeo entre amigos.
 
 - **Repo**: https://github.com/Ren0X1/RGL-Discord-BOT (rama `main`)
-- **Versión actual**: 1.5.1.f0
+- **Versión actual**: 2.0.0.f0
 - **Autor**: Ren0X1 (renox) — responder siempre **en español**, directo y sin florituras.
 
 > Este fichero es el manual del proyecto y **entra en los backups automáticos**
@@ -18,17 +18,20 @@ Counter-Strike y Rust, humor de cachondeo entre amigos.
 
 | | |
 |---|---|
-| Máquina | Raspberry Pi Zero 2 W, Debian 13 (trixie), aarch64, Python 3.13 |
+| Máquina | Raspberry Pi Zero 2 W, Debian 13 (trixie), aarch64 |
+| Python | **3.15** instalado con `uv` (`~/.local/bin/uv`), no el de apt. El venv `venv/` apunta a la versión menor, así que los parches entran solos con `uv python upgrade 3.15` (lo hace `startup.sh`) |
 | Recursos | ~415 MB RAM + 414 MB swap, 4 cores |
 | Carpeta del bot | `/home/renox/discord-bot` (venv propio en `venv/`) |
 | Usuario | `renox` · host `RnxZeroPI` · IP LAN `192.168.100.75` |
-| Servicios systemd | `discordbot`, `panel`, `bot-startup` |
+| Servicios systemd | `discordbot`, `bot-startup` (+ `recarga-web`, que es ZeroDesk) |
 | Acceso remoto | Tailscale (nunca `tailscale funnel`) |
+| Panel | **ZeroDesk** (`~/ZeroDesk`, repo `Ren0X1/ZeroDesk`, servicio `recarga-web`). El bot ya no tiene panel propio |
 | Servidor Discord | ID `673322136298979328` |
 
 ### Acceso desde Windows
-No hay `sshpass`, pero sí **plink** (PuTTY). Hace falta fijar la host key y, como
-no hay tty, `sudo` se alimenta por stdin:
+Hay clave SSH (`~/.ssh/id_ed25519_pi`) y alias en `~/.ssh/config`: **`ssh pi`** entra sin
+contraseña. `sudo` sí la pide y, como no hay tty, se le pasa por stdin
+(`echo '<contraseña>' | sudo -S …`). Alternativa sin clave, con plink (PuTTY):
 
 ```bash
 "/c/Program Files/PuTTY/plink" -batch -ssh renox@192.168.100.75 -pw <contraseña> \
@@ -41,7 +44,6 @@ El flujo es: **cambios → GitHub → la Pi se sincroniza**. GitHub es la fuente
 
 ```bash
 sudo bash /home/renox/discord-bot/startup.sh   # apt + git reset --hard origin/main + pip + restart
-sudo systemctl restart panel                   # si se tocó el panel
 ```
 
 > ⚠️ El script está en `~/discord-bot/startup.sh`, **no** en `~/startup.sh`.
@@ -60,7 +62,7 @@ cd ~/discord-bot && cat VERSION && git log --oneline -1   # siempre verificar
 ### Logs
 ```bash
 sudo journalctl -u discordbot -f      # el bot
-sudo journalctl -u panel -f           # el panel
+sudo journalctl -u recarga-web -f     # ZeroDesk (el panel)
 sudo journalctl -u bot-startup -b     # el arranque de la Pi (script startup.sh)
 ```
 
@@ -68,7 +70,7 @@ sudo journalctl -u bot-startup -b     # el arranque de la Pi (script startup.sh)
 
 ## Servicios systemd (arranque automático tras un reinicio)
 
-Los tres units viven en `/etc/systemd/system/` (fuera del repo, por eso **van
+Los units viven en `/etc/systemd/system/` (fuera del repo, por eso **van
 dentro del backup**). Si hay que rehacer la Pi desde cero, se crean así:
 
 ### 1) `discordbot.service` — el bot
@@ -90,26 +92,7 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-### 2) `panel.service` — el panel web
-```ini
-[Unit]
-Description=Panel web de control del bot
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=renox
-WorkingDirectory=/home/renox/discord-bot
-ExecStart=/home/renox/discord-bot/venv/bin/python /home/renox/discord-bot/panel/app.py
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-### 3) `bot-startup.service` — actualizar y arrancar al encender
+### 2) `bot-startup.service` — actualizar y arrancar al encender
 `oneshot` + `RemainAfterExit`: corre una vez por arranque. `TimeoutStartSec=0`
 porque un `apt upgrade` en la Zero 2 W puede tardar lo suyo.
 ```ini
@@ -132,7 +115,7 @@ WantedBy=multi-user.target
 ```bash
 sudo nano /etc/systemd/system/discordbot.service     # pegar el contenido de arriba
 sudo systemctl daemon-reload
-sudo systemctl enable --now discordbot panel bot-startup
+sudo systemctl enable --now discordbot bot-startup
 sudo systemctl status discordbot                     # comprobar
 ```
 
@@ -154,14 +137,9 @@ discord-bot/
 ├── startup.sh            # actualiza la Pi y arranca el bot (lo llama bot-startup.service)
 ├── update.sh             # actualización manual (no lo llama nadie automáticamente)
 ├── .github/workflows/release.yml
-├── cogs/                 # 27 cogs + steamutil (ver abajo)
-├── panel/
-│   ├── app.py            # Flask + waitress (HTTP) / werkzeug (HTTPS)
-│   ├── templates/        # login, dashboard, config, ia
-│   └── static/           # iconos PWA
+├── cogs/                 # 27 cogs + ayudas (steamutil, httputil, util)
 ├── scripts/autorizar_gdrive.py
 ├── data/                 # TODO el estado (gitignored)
-└── certs/                # certificados del panel (HTTPS opcional)
 ```
 
 ### Los dos ficheros de configuración
@@ -215,8 +193,14 @@ segundo no existe, esas funciones simplemente quedan apagadas. Las plantillas so
 | `tickets` | Tickets estilo Ticket Tool. |
 | `welcome` | Bienvenidas/despedidas + autorol. |
 
-`cogs/steamutil.py` **no es un cog** (no va en la tupla `COGS`): son las ayudas
-de Steam que comparten `csstats` y `rust`.
+Tres ficheros de `cogs/` **no son cogs** (no van en la tupla `COGS`):
+- `steamutil.py`: las ayudas de Steam que comparten `csstats` y `rust`.
+- `httputil.py`: **la sesión HTTP única del bot**. Nada de `aiohttp.ClientSession()`
+  nuevas: `async with httputil.sesion(20) as session:` (20 s por petición). La
+  cierra `bot.close()`.
+- `util.py`: `conectar_db()` (SQLite en **WAL**, úsalo para cualquier base nueva) y
+  `Programador`, que duerme hasta el siguiente vencimiento en vez de sondear
+  (lo usan `reminders` y `polls`; tras insertar algo, `programador.avisar()`).
 
 ---
 
@@ -408,6 +392,13 @@ Funcionamiento:
 - `consolidar_memoria()` corre a diario (5:00) y fusiona duplicados.
 - Al arrancar completa `nombre`/`mote` que falten, consultándolos en Discord.
 - Comandos de control: `/ia_memoria`, `/ia_olvidar`, `/ia_reset`, `/ia_aprender` (fuerza y diagnostica).
+- **Qué se apunta** (prompt de `_capturar`): solo lo que siga siendo verdad dentro de un mes
+  (gustos, juegos y rol, curro, relaciones, bromas recurrentes, motes). Nunca enlaces, "X
+  compartió/pidió/dijo…", citas, subidas de nivel ni cosas de una partida. Máximo 2 datos por
+  persona y vuelta. Los mensajes de **bots no entran** en la captura.
+- Extraer y fusionar memoria va con `temperature=0.2`; charlar, con 0.85.
+- El 2026-11-26 se vació `ai_saved.json` en la Pi porque estaba lleno de chorradas de la
+  captura vieja (la copia quedó en `~/ai_saved.viejo.json`).
 
 ### Persona
 Colega más del grupo: gracioso, vacilón, español coloquial. **Prohibido** hacer de
@@ -415,12 +406,15 @@ presentador o recapitular ("me parece que X está…", "Y, por último…") y **
 romper el personaje hablando de que es un bot o de que lo programan.
 Definida en `_AI_PROMPT_DEFECTO` (config.py) y **sobreescribible con `AI_SYSTEM_PROMPT`
 en el `.env`** — si el usuario reporta que la persona no cambia, revisar esa variable primero.
+Vacía (`AI_SYSTEM_PROMPT=`) cuenta como "no puesta": se lee con `getenv(...) or defecto`.
+El sistema también le pasa la fecha/hora y **a quién está contestando** (el último mensaje).
 
 ### Modelos de razonamiento (importante)
 `openai/gpt-oss-120b` **razona antes de responder**. Si el presupuesto de tokens es
 corto se lo gasta pensando y devuelve `content` vacío → el bot se queda mudo.
 Por eso `_api()` detecta estos modelos (`_es_razonador()`) y les manda
-`reasoning_effort=low`, `reasoning_format=hidden` y `max_completion_tokens` amplio.
+`reasoning_effort=AI_REASONING` (**medium** por defecto; con low respondía rápido pero
+tonta), `reasoning_format=hidden` y `max_completion_tokens` amplio. Timeout de 45 s.
 Los modelos normales siguen usando `max_tokens`.
 
 ---
@@ -472,7 +466,16 @@ Todo lo necesario para levantar el bot en una máquina limpia:
 | `data/` | bases de datos y JSON (memoria de la IA, niveles, tickets, vinculaciones…) |
 | `.env`, `.env.avisos`, `.env.example`… | **toda** la configuración (si `BACKUP_INCLUDE_ENV`) |
 | `CLAUDE.md` | este manual, que documenta hasta cómo rehacer los servicios |
-| `systemd/*.service` | los tres units, que viven en `/etc/systemd/system` |
+| `zerodesk/` | `.env`, `estado.json`, `eventos.json` y `telemetria.db` de ZeroDesk (`BACKUP_ZERODESK_DIR`) |
+| `systemd/*.service` | `discordbot`, `bot-startup` y `recarga-web`, que viven en `/etc/systemd/system` |
+| `MANIFIESTO.txt` | versión, commit, Python, paquetes exactos y cómo restaurar |
+
+Las `.db` se meten con la **API de backup de SQLite** (`_meter_sqlite`), nunca
+copiando el fichero: con WAL lo último puede estar aún en el `-wal`. El backup
+habla con la **API REST de Drive** con la sesión compartida; no se usa
+`google-api-python-client` (pesaba varios MB en memoria para cuatro llamadas).
+La clave SSH de la Pi al PC (`~/.ssh/id_ed25519_pc`) no va: se regenera con el
+`instalar.sh` de ZeroDesk.
 
 Lo único que **no** se guarda son las credenciales de Drive
 (`data/gdrive_token.json`, `data/gdrive_client.json`): se vuelven a autorizar con
@@ -533,6 +536,17 @@ el script y no interesa tenerlas dentro del propio backup.
 19. **Republicar un panel de roles mandando otro mensaje** → el canal se llenaba
     de paneles viejos con botones que seguían funcionando. El panel recuerda su
     mensaje y se **edita**.
+20. **Abrir una `aiohttp.ClientSession` por comando** → pool, TLS y DNS nuevos en
+    cada llamada. Se usa la sesión compartida de `httputil`.
+21. **Bucles de 15–30 s mirando SQLite "por si acaso"** → la Pi despierta sin
+    motivo. `Programador` duerme hasta el siguiente vencimiento.
+22. **Dos paneles web en una Pi de 415 MB** → el del bot se fusionó en ZeroDesk.
+23. **`os.getenv("X", defecto)` con `X=` vacío en el `.env`** → devuelve `""`, no el
+    defecto. La IA estuvo meses sin personalidad por `AI_SYSTEM_PROMPT=`. Usar
+    `os.getenv("X", "").strip() or defecto` para textos con valor por defecto.
+24. **Capturar memoria con temperatura alta y mensajes de bots** → `ai_saved.json`
+    lleno de "X compartió un enlace" y "subió al nivel 1". Temperatura baja, sin
+    bots y prompt que prohíbe lo efímero.
 
 ---
 

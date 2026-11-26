@@ -29,12 +29,12 @@ import json
 import logging
 from datetime import datetime, timezone
 
-import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
 import config
+from cogs import httputil
 
 log = logging.getLogger("github")
 
@@ -206,8 +206,7 @@ class GitHub(commands.Cog):
         barrido = barrido or self._vuelta % cada == 1
 
         avisos = 0
-        timeout = aiohttp.ClientTimeout(total=30)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with httputil.sesion(30) as session:
             try:
                 repos, listados = await self._vigilados(session)
             except Exception as exc:
@@ -417,8 +416,7 @@ class GitHub(commands.Cog):
     @app_commands.checks.has_permissions(manage_guild=True)
     async def cmd_lista(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True, thinking=True)
-        timeout = aiohttp.ClientTimeout(total=30)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with httputil.sesion(30) as session:
             try:
                 repos, _ = await self._vigilados(session)
             except Exception as exc:

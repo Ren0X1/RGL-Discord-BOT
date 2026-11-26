@@ -58,6 +58,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 import config
+from cogs import httputil
 from cogs import reactionroles as rr
 
 log = logging.getLogger("steamnews")
@@ -560,7 +561,7 @@ class SteamNews(commands.Cog):
             if await self._presentar(canal, juego):
                 await asyncio.sleep(2)
 
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
+        async with httputil.sesion(30) as session:
             for juego in juegos:
                 clave = str(juego["appid"])
                 guardado = self._estado.setdefault(clave, {})
@@ -700,7 +701,7 @@ class SteamNews(commands.Cog):
             return
         await interaction.response.defer(thinking=True, ephemeral=True)
 
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
+        async with httputil.sesion(30) as session:
             en_steam = await self._nombre_en_steam(session, appid)
             if en_steam is None and not nombre:
                 await interaction.followup.send(

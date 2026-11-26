@@ -10,6 +10,35 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
 ---
 
+## [2.0.0.f0] - 2026-11-26 · 💥 major
+### 💥 Cambia
+- 🖥️ **Adiós al panel web propio del bot.** Todo lo que hacía (estado, logs, editor del `.env`, memoria e interruptor de la IA, reiniciar / actualizar) se ha pasado a **[ZeroDesk](https://github.com/Ren0X1/ZeroDesk)**, el panel que ya corría en la Pi para el PC. Un panel, un servicio y menos RAM. Se van `panel/`, `panel.service` y las variables `PANEL_*`.
+- 🐍 **Python 3.15** (instalado con `uv`, binario ya compilado: nada de compilar en la Zero 2 W). `startup.sh` recoge solo los parches nuevos (`uv python upgrade 3.15`).
+
+### ⚡ Consume menos
+- 🌐 **Una sola sesión HTTP para todo el bot** (`cogs/httputil.py`) en vez de abrir una nueva en cada comando: se reutilizan conexiones y se cachea el DNS.
+- 😴 **Recordatorios y encuestas ya no miran la base de datos cada 15–30 s**: el bot duerme hasta que vence lo siguiente y se despierta al crear uno nuevo (`cogs/util.py`, `Programador`).
+- 💾 **SQLite en modo WAL** en niveles, encuestas, recordatorios y tickets: menos escrituras en la tarjeta SD y sin bloqueos entre lecturas y escrituras.
+- 📦 **Fuera `google-api-python-client`**: el backup habla con la API REST de Drive directamente. Esa librería cargaba al arrancar el documento de descubrimiento de Drive y se quedaba con varios MB para siempre.
+
+### 🧠 IA más lista
+- 🐛 **La IA llevaba tiempo sin personalidad**: con `AI_SYSTEM_PROMPT=` vacío en el `.env`, `getenv` devolvía `""` en vez del prompt por defecto. Ahora vacío = el de serie.
+- 🤔 Piensa más antes de contestar: `reasoning_effort` pasa de `low` a **`medium`** (configurable con `AI_REASONING`), lee el doble de cada mensaje y sabe la fecha, la hora y **a quién está contestando**.
+- 🎯 El prompt deja claro que ser gracioso no es ser tonto: si le preguntan algo en serio, contesta bien (y si no lo sabe, lo dice en vez de inventárselo).
+- 🧹 **Memoria con criterio**: la captura ya no apunta enlaces, subidas de nivel, citas ni "fulano compartió algo"; solo lo que siga siendo verdad dentro de un mes, como mucho 2 datos por persona, sin mensajes de bots y con temperatura baja. La memoria aprendida que había se ha vaciado.
+
+### 💾 Backups más completos
+- 🗃️ Las bases SQLite se copian con la **API de backup de SQLite**: una foto consistente aunque el bot esté escribiendo (con WAL, copiar el `.db` a pelo podía dejar fuera lo último).
+- 🖥️ Entra **ZeroDesk**: su `.env`, `estado.json`, `eventos.json`, `telemetria.db` y el unit `recarga-web.service` (`BACKUP_ZERODESK_DIR`).
+- 📋 **`MANIFIESTO.txt`** dentro del zip: versión, commit, Python, paquetes exactos del venv y cómo restaurar.
+
+### 🧠 Mejorado
+- 🔧 `startup.sh` repone solo los permisos del repo antes del `git fetch` (el fallo de *insufficient permission* que dejaba el código viejo) y avisa a gritos si la sincronización falla.
+- ⬆️ `pip install --upgrade-strategy eager`: también se actualizan las dependencias de las dependencias.
+- 🧹 `bot.py` cierra la sesión HTTP al apagarse y no duplica el logging de discord.py.
+
+---
+
 ## [1.5.1.f0] - 2026-09-07 · 🧹 limpieza
 ### 🗑️ Quitado
 - 📤 **Fuera los avisos de commits**. Anunciar cada push a la rama principal llenaba el canal de ruido: lo que interesa es la **versión publicada**, no cada commit. Se van el aviso, `GITHUB_AVISAR_COMMITS`, `GITHUB_COMMITS_MAX` y `GITHUB_COMMITS_MENTION`, y con ellos la petición de commits por repo (una llamada menos a la API en cada vuelta).

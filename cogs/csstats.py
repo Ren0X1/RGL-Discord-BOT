@@ -20,12 +20,12 @@ con nombre personalizado (/id/...) y para sacar el avatar del jugador.
 
 import logging
 
-import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands
 
 import config
+from cogs import httputil
 from cogs import steamutil as su
 
 log = logging.getLogger("csstats")
@@ -147,7 +147,7 @@ class CSStats(commands.Cog):
                 await interaction.followup.send("Solo el staff puede vincular a otra persona.")
                 return
             objetivo = usuario
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20)) as session:
+        async with httputil.sesion(20) as session:
             steam64, err = await su.resolver_steam64(session, url)
         if err:
             await interaction.followup.send(f"⚠️ {err}")
@@ -183,7 +183,7 @@ class CSStats(commands.Cog):
                     "o pásame la URL directamente.")
                 return
 
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=25)) as session:
+        async with httputil.sesion(25) as session:
             steam64, _etiqueta, err = await su.resolver_objetivo(session, interaction.guild, url, "cs")
             if err:
                 await interaction.followup.send(f"⚠️ {err}")
@@ -222,7 +222,7 @@ class CSStats(commands.Cog):
         await interaction.response.defer(thinking=True, ephemeral=False)
         entradas = [x for x in (jugador1, jugador2, jugador3, jugador4) if x]
         perfiles, errores = [], []
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
+        async with httputil.sesion(30) as session:
             for texto in entradas:
                 steam64, etiqueta, err = await su.resolver_objetivo(session, interaction.guild, texto, "cs")
                 if err:

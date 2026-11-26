@@ -179,7 +179,10 @@ AI_CHANNEL_ID = _int("AI_CHANNEL_ID")
 AI_CHANCE = min(1.0, max(0.0, _float("AI_CHANCE", 0.25)))   # 0.25 = 1 de cada 4 mensajes
 AI_API_BASE = os.getenv("AI_API_BASE", "https://api.groq.com/openai/v1").rstrip("/")
 AI_API_KEY = os.getenv("AI_API_KEY", "")
-AI_MODEL = os.getenv("AI_MODEL", "openai/gpt-oss-120b")
+AI_MODEL = os.getenv("AI_MODEL", "").strip() or "openai/gpt-oss-120b"
+# Cuánto "piensa" un modelo de razonamiento antes de responder: low | medium | high.
+# medium = respuestas bastante más listas a cambio de 1-2 s más.
+AI_REASONING = (os.getenv("AI_REASONING", "").strip().lower() or "medium")
 AI_MAX_TOKENS = _int("AI_MAX_TOKENS", 1500)   # los modelos que razonan necesitan margen (ver MIN_TOKENS_RAZONADOR)
 AI_COOLDOWN = _int("AI_COOLDOWN", 6)   # segundos mínimos entre respuestas (respeta el límite de la API)
 AI_HISTORY = max(0, _int("AI_HISTORY", 20))   # nº de mensajes recientes que se pasan como contexto
@@ -202,15 +205,22 @@ _AI_PROMPT_DEFECTO = (
     "- Puedes usar exclamaciones y 'jajaja' si pega, pero sin sonar a locutor ni a anuncio.\n"
     "- No hagas rol ni narres acciones (nada de asteriscos) y no pongas tu nombre delante.\n"
     "- Fíjate de qué juego o tema están hablando y mete las pullas por ahí.\n"
+    "- Ser gracioso NO es ser tonto: si te preguntan algo de verdad (de un juego, de tecnología, "
+    "un dato, un consejo), contesta BIEN y con datos correctos, con tu tono de colega. Si no lo "
+    "sabes, dilo con gracia en vez de inventártelo.\n"
+    "- Entiende la conversación antes de soltar nada: quién habla con quién, de qué va el hilo y "
+    "qué te están pidiendo a ti en concreto.\n"
     "- Vacila fuerte pero sin insultos graves de verdad (nada de racismo serio ni ataques personales que hagan daño): es coña de colegas.\n"
     "Ejemplos del tono que mola:\n"
     "\"que opinas de mi?\" -> \"que eres un friki que en vez de jugar se pone a programar, y encima calvo jajaja\"\n"
     "\"aqui solo machos que comen jamon\" -> \"asi me gusta, ni podemitas ni novias mandando, viva el jamon y el counter\"\n"
     "\"jugamos al valorant?\" -> \"valorant? eso pa mariposas illo, counter o nada\""
 )
-AI_SYSTEM_PROMPT = os.getenv("AI_SYSTEM_PROMPT", _AI_PROMPT_DEFECTO)
+# OJO: "or" y no el segundo argumento de getenv. Con AI_SYSTEM_PROMPT= vacío en el
+# .env, getenv devuelve "" y la IA se quedaba SIN personalidad (pasó en la Pi).
+AI_SYSTEM_PROMPT = os.getenv("AI_SYSTEM_PROMPT", "").strip() or _AI_PROMPT_DEFECTO
 # Contexto del servidor (vale para TODOS). Predefinido aquí; editable en vivo con /ia_contexto_server.
-AI_SERVER_CONTEXT = os.getenv("AI_SERVER_CONTEXT", "")
+AI_SERVER_CONTEXT = os.getenv("AI_SERVER_CONTEXT", "").strip()
 
 # --- 19) Anuncios de GitHub --- (se lee de .env.avisos)
 # Se vigilan USUARIOS enteros: todos los repos públicos de cada uno, sin tener que
@@ -311,3 +321,4 @@ BACKUP_KEEP = max(1, _int("BACKUP_KEEP", 10))                       # cuántos b
 BACKUP_INCLUDE_ENV = _bool("BACKUP_INCLUDE_ENV", True)             # incluir los .env (contienen claves)
 GDRIVE_FOLDER_NAME = os.getenv("GDRIVE_FOLDER_NAME", "RGL-Bot-Backups")   # carpeta que crea el bot en tu Drive
 GDRIVE_TOKEN = os.getenv("GDRIVE_TOKEN", "data/gdrive_token.json")        # token OAuth (scripts/autorizar_gdrive.py)
+BACKUP_ZERODESK_DIR = os.getenv("BACKUP_ZERODESK_DIR", "/home/renox/ZeroDesk/panel").strip()  # vacío = no guardar ZeroDesk

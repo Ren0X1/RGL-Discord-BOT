@@ -29,7 +29,7 @@ echo "==> [5/6] Actualizando dependencias del bot..."
 if [ -x "$BOT_DIR/venv/bin/pip" ]; then
     "$BOT_DIR/venv/bin/pip" install --quiet --upgrade pip
     if [ -f "$BOT_DIR/requirements.txt" ]; then
-        "$BOT_DIR/venv/bin/pip" install --upgrade -r "$BOT_DIR/requirements.txt"
+        "$BOT_DIR/venv/bin/pip" install --upgrade --upgrade-strategy eager -r "$BOT_DIR/requirements.txt"
     fi
 else
     echo "    (no encuentro el venv del bot, se omite)"
